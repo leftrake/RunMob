@@ -127,23 +127,16 @@ function parseEventsResponse(json: Record<string, unknown>, state: string): Meet
 
 function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | null {
   try {
-    const id = String(
-      raw.meetId ?? raw.MeetId ?? raw.meetID ?? raw.MeetID ??
-      raw.eventId ?? raw.EventId ?? raw.id ?? raw.Id ?? ''
-    )
-    const name = String(
-      raw.meetName ?? raw.MeetName ?? raw.eventName ?? raw.EventName ??
-      raw.name ?? raw.Name ?? ''
-    )
-    const date = String(
-      raw.startDate ?? raw.StartDate ?? raw.date ?? raw.Date ??
-      raw.eventDate ?? raw.EventDate ?? ''
-    )
-    const location = String(
-      raw.location ?? raw.Location ?? raw.venue ?? raw.Venue ??
-      raw.city ?? raw.City ?? ''
-    )
-    const divisionRaw = String(raw.division ?? raw.Division ?? raw.level ?? raw.Level ?? '').toLowerCase()
+    // Skip meets with no results posted yet
+    if (raw.HasResults === 0 || raw.hasResults === 0) return null
+
+    const id = String(raw.IDMeet ?? raw.meetId ?? raw.MeetId ?? raw.id ?? '')
+    const name = String(raw.MeetName ?? raw.meetName ?? raw.name ?? '')
+    const date = String(raw.StartDate ?? raw.startDate ?? raw.date ?? '')
+    const city = String(raw.City ?? raw.city ?? '')
+    const locationName = String(raw.LocationName ?? raw.locationName ?? '')
+    const location = [locationName, city].filter(Boolean).join(', ')
+    const levelMask = Number(raw.LevelMask ?? raw.levelMask ?? 0)
 
     if (!id || !name) return null
 
@@ -153,8 +146,8 @@ function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | 
       date: normalizeDate(date),
       location,
       state,
-      level: inferLevel(divisionRaw),
-      division: inferDivision(divisionRaw),
+      level: inferLevelFromMask(levelMask),
+      division: null,
     }
   } catch {
     return null
@@ -167,15 +160,10 @@ function normalizeDate(raw: string): string {
   return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString()
 }
 
-function inferLevel(division: string): 'hs' | 'college' | 'open' {
-  if (division.includes('college') || division.includes('ncaa') || division.includes('d1') || division.includes('d2') || division.includes('d3')) return 'college'
-  if (division.includes('open') || division.includes('club')) return 'open'
-  return 'hs'
-}
-
-function inferDivision(division: string): string | null {
-  const match = division.match(/\b(1a|2a|3a|4a|5a|d1|d2|d3|d-i|d-ii|d-iii)\b/i)
-  return match ? match[1].toUpperCase() : null
+function inferLevelFromMask(mask: number): 'hs' | 'college' | 'open' {
+  if (mask & 4) return 'hs'      // bit 2 = high school
+  if (mask & 8) return 'college' // bit 3 = college
+  return 'open'
 }
 
 function stateToSlug(state: string): string {
