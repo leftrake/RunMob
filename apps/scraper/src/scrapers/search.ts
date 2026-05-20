@@ -28,7 +28,7 @@ export async function searchRecentMeets(
       const url = route.request().url()
       interceptedUrls.push(url)
 
-      if (url.includes('/api/') || url.includes('GetMeet') || url.includes('meet')) {
+      if (url.includes('/api/')) {
         console.log(`  [intercept] ${url}`)
         const response = await route.fetch()
         const contentType = response.headers()['content-type'] ?? ''
