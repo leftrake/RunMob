@@ -101,6 +101,15 @@ if (args[0] === '--once' || args[0] === '--run') {
   runScrapeJob()
     .catch(console.error)
     .finally(() => prisma.$disconnect().then(() => process.exit(0)))
+} else if (args[0] === '--reset') {
+  console.log('Deleting all data...')
+  await prisma.athleteResult.deleteMany()
+  await prisma.meetEvent.deleteMany()
+  await prisma.meet.deleteMany()
+  await prisma.athlete.deleteMany()
+  console.log('Done — all tables cleared.')
+  await prisma.$disconnect()
+  process.exit(0)
 } else if (args[0] === '--meet' && args[1]) {
   // Scrape a single meet by ID: tsx src/index.ts --meet <id>
   const { scrapeMeet } = await import('./scrapers/meet.js')
