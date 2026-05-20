@@ -1,9 +1,7 @@
 name: Scraper
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'   # every 6 hours
-  workflow_dispatch:          # manual trigger from GitHub Actions tab
+  workflow_dispatch:          # manual trigger only — VPS handles the cron via PM2
     inputs:
       states:
         description: 'Comma-separated states to scrape (e.g. NC,VA)'
