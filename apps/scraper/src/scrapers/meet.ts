@@ -93,10 +93,18 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
         const { page: ep } = await newPage()
         try {
           const resultPromise = new Promise<ScrapedEvent | null>((resolve) => {
-            const t = setTimeout(() => resolve(null), 12_000)
+            const t = setTimeout(() => {
+              console.log(`    Timeout waiting for GetResultsData3: ${eventUrl}`)
+              resolve(null)
+            }, 20_000)
             ep.on('response', async (res) => {
-              if (!res.url().includes('GetResultsData3') || !res.ok()) return
+              if (!res.url().includes('GetResultsData3')) return
               clearTimeout(t)
+              if (!res.ok()) {
+                console.log(`    GetResultsData3 ${res.status()} for ${eventUrl}`)
+                resolve(null)
+                return
+              }
               try {
                 const json = await res.json() as Record<string, unknown>
                 resolve(parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId))
@@ -106,14 +114,15 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
             })
           })
 
+          console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
           const result = await resultPromise
           if (result && result.results.length > 0) {
             allEvents.push(result)
-            console.log(`  ${result.eventName} ${gender}: ${result.results.length} results`)
+            console.log(`    ${result.eventName} ${gender}: ${result.results.length} results`)
           }
-        } catch {
-          // navigation error or timeout — skip this event
+        } catch (err) {
+          console.log(`    Error for ${eventUrl}: ${err}`)
         } finally {
           await ep.close()
         }
