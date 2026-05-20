@@ -29,24 +29,24 @@ export interface ScrapedMeet {
   events: ScrapedEvent[]
 }
 
-// Track event IDs → {name, slug} — field events (HJ, LJ, SP, etc.) intentionally excluded
-const TRACK_EVENTS: Record<number, { name: string; slug: string }> = {
-  1:  { name: '100m',   slug: '100m'   },
-  2:  { name: '200m',   slug: '200m'   },
-  3:  { name: '400m',   slug: '400m'   },
-  4:  { name: '800m',   slug: '800m'   },
-  5:  { name: '1500m',  slug: '1500m'  },
-  6:  { name: '1600m',  slug: '1600m'  },
-  7:  { name: '4x100m', slug: '4x100m' },
-  8:  { name: '4x400m', slug: '4x400m' },
-  9:  { name: '110mH',  slug: '110mh'  }, // boys; girls get 100mH via slug override
-  10: { name: '300mH',  slug: '300mh'  },
-  11: { name: '4x800m', slug: '4x800m' },
-  12: { name: '3200m',  slug: '3200m'  },
-  13: { name: '3000m',  slug: '3000m'  },
-  14: { name: '5000m',  slug: '5000m'  },
-  15: { name: 'Mile',   slug: 'mile'   },
-  16: { name: '10000m', slug: '10000m' },
+// Track event IDs → name — field events (HJ, LJ, SP, etc.) intentionally excluded
+const TRACK_EVENTS: Record<number, string> = {
+  1:  '100m',
+  2:  '200m',
+  3:  '400m',
+  4:  '800m',
+  5:  '1500m',
+  6:  '1600m',
+  7:  '4x100m',
+  8:  '4x400m',
+  9:  '110mH',   // boys; girls get 100mH in parseResultsData3Response
+  10: '300mH',
+  11: '4x800m',
+  12: '3200m',
+  13: '3000m',
+  14: '5000m',
+  15: 'Mile',
+  16: '10000m',
 }
 
 interface EventListItem { e: number; d: number }
@@ -60,19 +60,22 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
     // Navigate to base results page to warm up CF clearance and get event list
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    await sleep(2000)
 
-    // Try to read event list from SPA window state
-    const eventList = await page.evaluate(() => {
-      const win = window as Record<string, unknown>
-      for (const key of Object.keys(win)) {
-        const val = win[key]
-        if (val && typeof val === 'object' && 'eventDivsWithResults' in (val as object)) {
-          return ((val as Record<string, unknown>).eventDivsWithResults as EventListItem[]) ?? []
-        }
-      }
-      return [] as EventListItem[]
-    }).catch(() => [] as EventListItem[])
+    // Capture GetEventListData from the base page load
+    const eventListPromise = new Promise<EventListItem[]>((resolve) => {
+      const t = setTimeout(() => resolve([]), 10_000)
+      page.on('response', async (res) => {
+        if (!res.url().includes('GetEventListData')) return
+        clearTimeout(t)
+        try {
+          const json = await res.json() as { eventDivsWithResults?: EventListItem[] }
+          resolve(json.eventDivsWithResults ?? [])
+        } catch { resolve([]) }
+      })
+    })
+
+    await sleep(2000)
+    const eventList = await eventListPromise
 
     const trackEventIds = eventList.length > 0
       ? eventList.map((e) => e.e).filter((id) => TRACK_EVENTS[id] !== undefined)
@@ -86,10 +89,8 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     // SPA client-side routing which skips the GetResultsData3 network call.
     // Fresh pages share CF clearance cookies via the shared browser context.
     for (const eventId of trackEventIds) {
-      const def = TRACK_EVENTS[eventId]!
       for (const gender of ['m', 'f'] as const) {
-        const slug = eventId === 9 && gender === 'f' ? '100mh' : def.slug
-        const eventUrl = `${baseUrl}/${gender}/${eventId}/${slug}`
+        const eventUrl = `${baseUrl}/${gender}/${eventId}`
 
         const { page: ep } = await newPage()
         try {
@@ -185,9 +186,8 @@ function parseResultsData3Response(
 
     if (results.length === 0) return null
 
-    const def = TRACK_EVENTS[eventId]
-    if (!def) return null
-    let eventName = def.name
+    let eventName = TRACK_EVENTS[eventId]
+    if (!eventName) return null
     if (eventId === 9 && gender === 'F') eventName = '100mH'
 
     return { eventName, gender, results }
