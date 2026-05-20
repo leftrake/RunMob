@@ -19,8 +19,9 @@ export async function searchRecentMeets(
   try {
     // Navigate to athletic.net so Cloudflare's JS challenge runs and sets clearance cookies
     console.log('  Loading athletic.net to clear Cloudflare...')
-    await page.goto('https://www.athletic.net/events', { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    await sleep(3000)
+    await page.goto('https://www.athletic.net/events', { waitUntil: 'networkidle', timeout: 60_000 })
+    // Wait for the actual page — CF challenge redirects, so networkidle fires after the real page loads
+    await sleep(2000)
 
     const end = new Date()
     const start = new Date()
