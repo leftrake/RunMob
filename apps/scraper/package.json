@@ -1,0 +1,26 @@
+{
+  "name": "@runmob/scraper",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "playwright install chromium --with-deps && tsx src/index.ts",
+    "scrape:meet": "tsx src/scrapers/meet.ts",
+    "scrape:search": "tsx src/scrapers/search.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.44.0",
+    "@prisma/client": "^5.14.0",
+    "@runmob/shared": "workspace:*",
+    "node-cron": "^3.0.3",
+    "playwright": "^1.44.0",
+    "prisma": "^5.14.0",
+    "tsx": "^4.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-cron": "^3.0.11",
+    "typescript": "^5.4.0"
+  }
+}
