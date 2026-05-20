@@ -50,6 +50,20 @@ export interface AthleteResult {
   seasonBestAtMeet: boolean
 }
 
+export interface AthleteResultSummary {
+  id: string
+  meetId: string
+  meetName: string
+  meetDate: string
+  eventName: string
+  place: number
+  displayTime: string
+  rating: number
+  ratingLabel: RatingLabel
+  prAtMeet: boolean
+  seasonBestAtMeet: boolean
+}
+
 export interface Athlete {
   id: string
   name: string
@@ -60,8 +74,7 @@ export interface Athlete {
   events: string[]
   seasonBests: Record<string, string>
   allTimePRs: Record<string, string>
-  ratings: AthleteResult[]
-  meets: MeetSummary[]
+  results: AthleteResultSummary[]
 }
 
 export type RatingLabel =

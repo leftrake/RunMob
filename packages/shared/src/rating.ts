@@ -19,11 +19,7 @@ export function getRatingLabel(rating: number): RatingLabel {
 }
 
 export function getRatingColor(rating: number): string {
-  if (rating >= 8.0) return '#16a34a'
-  if (rating >= 7.0) return '#65a30d'
-  if (rating >= 6.0) return '#ca8a04'
-  if (rating >= 5.0) return '#ea580c'
-  return '#dc2626'
+  return getRatingTier(rating).color
 }
 
 export interface RatingInputs {

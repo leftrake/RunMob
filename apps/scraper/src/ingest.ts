@@ -27,14 +27,17 @@ export async function ingestMeet(
       name: scraped.name,
       date: new Date(scraped.date),
       location: scraped.location,
-      level: 'hs',
-      division: null,
-      state: 'NC',
+      level: scraped.level ?? 'hs',
+      division: scraped.division ?? null,
+      state: scraped.state ?? '',
     },
     update: {
       name: scraped.name,
       date: new Date(scraped.date),
       location: scraped.location,
+      level: scraped.level ?? 'hs',
+      division: scraped.division ?? null,
+      state: scraped.state ?? '',
     },
   })
 
