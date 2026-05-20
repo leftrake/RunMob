@@ -58,12 +58,9 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     const baseUrl = rsUrl ?? `https://www.athletic.net/TrackAndField/meet/${athleticNetId}/results`
     console.log(`  Navigating to ${baseUrl}`)
 
-    // Navigate to base results page to warm up CF clearance and get event list
-    await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-
-    // Capture GetEventListData from the base page load
+    // Set up listener BEFORE goto — GetEventListData fires during page load
     const eventListPromise = new Promise<EventListItem[]>((resolve) => {
-      const t = setTimeout(() => resolve([]), 10_000)
+      const t = setTimeout(() => resolve([]), 15_000)
       page.on('response', async (res) => {
         if (!res.url().includes('GetEventListData')) return
         clearTimeout(t)
@@ -74,8 +71,9 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
       })
     })
 
-    await sleep(2000)
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 })
     const eventList = await eventListPromise
+    await sleep(500)
 
     const trackEventIds = eventList.length > 0
       ? eventList.map((e) => e.e).filter((id) => TRACK_EVENTS[id] !== undefined)
