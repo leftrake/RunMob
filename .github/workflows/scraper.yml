@@ -1,0 +1,51 @@
+name: Scraper
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:          # manual trigger from GitHub Actions tab
+    inputs:
+      states:
+        description: 'Comma-separated states to scrape (e.g. NC,VA)'
+        required: false
+        default: ''
+      meet_id:
+        description: 'Scrape a single meet by AthleticNet ID (optional)'
+        required: false
+        default: ''
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @runmob/scraper exec playwright install chromium --with-deps
+
+      - name: Run scraper
+        run: |
+          if [ -n "${{ github.event.inputs.meet_id }}" ]; then
+            pnpm --filter @runmob/scraper exec tsx src/index.ts --meet "${{ github.event.inputs.meet_id }}"
+          else
+            pnpm --filter @runmob/scraper exec tsx src/index.ts --once
+          fi
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SCRAPE_STATES: ${{ github.event.inputs.states || vars.SCRAPE_STATES || 'NC' }}
+          SCRAPE_DAYS_BACK: ${{ vars.SCRAPE_DAYS_BACK || '14' }}
+          SCRAPE_ATHLETES: ${{ vars.SCRAPE_ATHLETES || 'false' }}
