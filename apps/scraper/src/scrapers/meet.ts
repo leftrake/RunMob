@@ -39,7 +39,7 @@ const TRACK_EVENTS: Record<number, { name: string; slug: string }> = {
   6:  { name: '1600m',  slug: '1600m'  },
   7:  { name: '4x100m', slug: '4x100m' },
   8:  { name: '4x400m', slug: '4x400m' },
-  9:  { name: '110mH',  slug: '110mh'  }, // boys; overridden to 100mH for girls
+  9:  { name: '110mH',  slug: '110mh'  }, // boys; girls get 100mH via slug override
   10: { name: '300mH',  slug: '300mh'  },
   11: { name: '4x800m', slug: '4x800m' },
   12: { name: '3200m',  slug: '3200m'  },
@@ -58,78 +58,12 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     const baseUrl = rsUrl ?? `https://www.athletic.net/TrackAndField/meet/${athleticNetId}/results`
     console.log(`  Navigating to ${baseUrl}`)
 
-    // Persistent listener — captures GetResultsData3 responses from any navigation on this page
-    const capturedByUrl = new Map<string, ScrapedEvent>()
-
-    page.on('response', async (res) => {
-      if (!res.url().includes('GetResultsData3')) return
-      if (!res.ok()) return
-      try {
-        const json = await res.json() as Record<string, unknown>
-        const outerList = (json.resultsTF as unknown[][]) ?? []
-        const rawResults = outerList.flat()
-        if (rawResults.length === 0) return
-
-        const first = rawResults[0] as Record<string, unknown>
-        const genderChar = String(first.Gender ?? '').toUpperCase()
-        const gender: 'M' | 'F' = genderChar === 'F' ? 'F' : 'M'
-        const eventId = Number(first.EventID ?? 0)
-
-        const eventDef = TRACK_EVENTS[eventId]
-        if (!eventDef) return  // field event or unknown
-
-        const results: ScrapedResult[] = []
-
-        for (const raw of rawResults) {
-          const r = raw as Record<string, unknown>
-          const displayTime = String(r.Result ?? '').trim()
-          if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
-          // Field event result formats: "15.23m" or "50-01.00"
-          if (/m$/.test(displayTime) || /-\d{2}/.test(displayTime)) continue
-
-          let timeSeconds: number
-          try {
-            timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
-            if (isNaN(timeSeconds) || timeSeconds <= 0) continue
-          } catch { continue }
-
-          const firstName = String(r.FirstName ?? '').trim()
-          const lastName  = String(r.LastName ?? '').trim()
-          const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
-          if (!athleteName) continue
-
-          results.push({
-            place: parseInt(String(r.Place ?? '0')) || results.length + 1,
-            athleteName,
-            athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
-            school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
-            displayTime,
-            timeSeconds,
-            gender,
-            wind: r.Wind != null ? String(r.Wind) : undefined,
-          })
-        }
-
-        if (results.length === 0) return
-
-        let eventName = eventDef.name
-        if (eventId === 9 && gender === 'F') eventName = '100mH'
-
-        const key = `${eventId}-${gender}`
-        if (!capturedByUrl.has(key)) {
-          capturedByUrl.set(key, { eventName, gender, results })
-          console.log(`  ${eventName} ${gender}: ${results.length} results`)
-        }
-      } catch { /* ignore */ }
-    })
-
-    // Navigate to base results page to get event list and warm up CF
+    // Navigate to base results page to warm up CF clearance and get event list
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 })
     await sleep(2000)
 
-    // Get event list from page state
+    // Try to read event list from SPA window state
     const eventList = await page.evaluate(() => {
-      // AthleticNET stores app state in window — try common keys
       const win = window as Record<string, unknown>
       for (const key of Object.keys(win)) {
         const val = win[key]
@@ -140,46 +74,124 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
       return [] as EventListItem[]
     }).catch(() => [] as EventListItem[])
 
-    // Fall back: use all known track event IDs if window state unavailable
     const trackEventIds = eventList.length > 0
       ? eventList.map((e) => e.e).filter((id) => TRACK_EVENTS[id] !== undefined)
       : Object.keys(TRACK_EVENTS).map(Number)
 
     console.log(`  Track events to scrape: ${trackEventIds.join(', ')}`)
 
-    // Navigate to each event×gender page — the SPA's own JS calls GetResultsData3
+    const allEvents: ScrapedEvent[] = []
+
+    // Use a fresh page per event — repeated page.goto() within the same page triggers
+    // SPA client-side routing which skips the GetResultsData3 network call.
+    // Fresh pages share CF clearance cookies via the shared browser context.
     for (const eventId of trackEventIds) {
       const def = TRACK_EVENTS[eventId]!
       for (const gender of ['m', 'f'] as const) {
         const slug = eventId === 9 && gender === 'f' ? '100mh' : def.slug
         const eventUrl = `${baseUrl}/${gender}/${eventId}/${slug}`
+
+        const { page: ep } = await newPage()
         try {
-          await page.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          await sleep(1500)
+          const resultPromise = new Promise<ScrapedEvent | null>((resolve) => {
+            const t = setTimeout(() => resolve(null), 12_000)
+            ep.on('response', async (res) => {
+              if (!res.url().includes('GetResultsData3') || !res.ok()) return
+              clearTimeout(t)
+              try {
+                const json = await res.json() as Record<string, unknown>
+                resolve(parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId))
+              } catch {
+                resolve(null)
+              }
+            })
+          })
+
+          await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+          const result = await resultPromise
+          if (result && result.results.length > 0) {
+            allEvents.push(result)
+            console.log(`  ${result.eventName} ${gender}: ${result.results.length} results`)
+          }
         } catch {
-          // timeout or navigation error — skip this event
+          // navigation error or timeout — skip this event
+        } finally {
+          await ep.close()
         }
       }
     }
 
-    const events = Array.from(capturedByUrl.values())
-    console.log(`  Total: ${events.length} event sections scraped`)
-
-    // Get meet name from page title
     const title = await page.title().catch(() => '')
     const name = title.replace(/ - Results.*/, '').replace(/ \| .*/, '').trim()
+
+    console.log(`  Total: ${allEvents.length} event sections scraped`)
 
     return {
       athleticNetId,
       name,
       date: new Date().toISOString(),
       location: '',
-      events,
+      events: allEvents,
     }
   } catch (err) {
     console.error(`  Error scraping meet ${athleticNetId}:`, err)
     return null
   } finally {
     await page.close()
+  }
+}
+
+function parseResultsData3Response(
+  json: Record<string, unknown>,
+  gender: 'M' | 'F',
+  eventId: number,
+): ScrapedEvent | null {
+  try {
+    const outerList = (json.resultsTF as unknown[][]) ?? []
+    const rawResults = outerList.flat()
+    if (rawResults.length === 0) return null
+
+    const results: ScrapedResult[] = []
+
+    for (const raw of rawResults) {
+      const r = raw as Record<string, unknown>
+      const displayTime = String(r.Result ?? '').trim()
+      if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
+      // Field event formats: "15.23m" (meters) or "50-01.00" (feet-inches)
+      if (/m$/.test(displayTime) || /-\d{2}/.test(displayTime)) continue
+
+      let timeSeconds: number
+      try {
+        timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
+        if (isNaN(timeSeconds) || timeSeconds <= 0) continue
+      } catch { continue }
+
+      const firstName = String(r.FirstName ?? '').trim()
+      const lastName  = String(r.LastName  ?? '').trim()
+      const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
+      if (!athleteName) continue
+
+      results.push({
+        place: parseInt(String(r.Place ?? '0')) || results.length + 1,
+        athleteName,
+        athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
+        school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
+        displayTime,
+        timeSeconds,
+        gender,
+        wind: r.Wind != null ? String(r.Wind) : undefined,
+      })
+    }
+
+    if (results.length === 0) return null
+
+    const def = TRACK_EVENTS[eventId]
+    if (!def) return null
+    let eventName = def.name
+    if (eventId === 9 && gender === 'F') eventName = '100mH'
+
+    return { eventName, gender, results }
+  } catch {
+    return null
   }
 }
