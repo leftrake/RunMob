@@ -37,29 +37,19 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
   try {
     const captured: { events: ScrapedEvent[] } = { events: [] }
 
-    // Intercept AthleticNet's results API — the SPA fetches JSON for each event
-    await page.route('**/api/v1/Meet/GetMeetData**', async (route) => {
-      const response = await route.fetch()
-      const json = await response.json().catch(() => null)
-      if (json) {
-        const parsed = parseMeetDataResponse(json)
-        captured.events.push(...parsed)
-      }
-      await route.fulfill({ response })
+    // Passively observe all athletic.net API responses to find the results endpoint
+    page.on('response', async (res) => {
+      const resUrl = res.url()
+      if (!resUrl.includes('athletic.net/api/v1/')) return
+      const endpoint = resUrl.split('/api/v1/')[1]?.split('?')[0]
+      if (!res.ok()) return
+      try {
+        const text = await res.text()
+        console.log(`  [${endpoint}] body (first 800): ${text.slice(0, 800)}`)
+      } catch { /* ignore */ }
     })
 
-    // Also intercept the results endpoint some newer meets use
-    await page.route('**/api/v1/Meet/GetResultsData**', async (route) => {
-      const response = await route.fetch()
-      const json = await response.json().catch(() => null)
-      if (json) {
-        const parsed = parseMeetDataResponse(json)
-        captured.events.push(...parsed)
-      }
-      await route.fulfill({ response })
-    })
-
-    const url = rsUrl ?? `https://www.athletic.net/TrackAndField/Meet/${athleticNetId}/Results`
+    const url = rsUrl ?? `https://www.athletic.net/TrackAndField/meet/${athleticNetId}/results`
     console.log(`  Navigating to ${url}`)
 
     // Log all XHR/fetch calls so we can find the correct API endpoint
@@ -70,7 +60,14 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     })
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    console.log(`  Final URL: ${page.url()}`)
+    console.log(`  Base results URL: ${page.url()}`)
+    await sleep(2000)
+
+    // Navigate into the first event results page to trigger the per-event results API call
+    const eventTestUrl = `${url}/m/1/100m`
+    console.log(`  Navigating to event test URL: ${eventTestUrl}`)
+    await page.goto(eventTestUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    console.log(`  Event URL landed: ${page.url()}`)
     await sleep(3000)
 
     // Grab meet metadata from the page title/header
