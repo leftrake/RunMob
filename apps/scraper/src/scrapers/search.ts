@@ -80,8 +80,10 @@ export async function searchRecentMeets(
 
     const firstList = Object.values(json).find((v) => Array.isArray(v)) as unknown[] | undefined
     if (firstList?.length) {
-      console.log(`  First item keys: ${Object.keys(firstList[0] as object).join(', ')}`)
-      console.log(`  First item: ${JSON.stringify(firstList[0]).slice(0, 300)}`)
+      const first = firstList[0] as Record<string, unknown>
+      console.log(`  First item keys: ${Object.keys(first).join(', ')}`)
+      console.log(`  First item: ${JSON.stringify(first).slice(0, 300)}`)
+      console.log(`  rsUrl value: ${JSON.stringify(first.rsUrl ?? first.RsUrl ?? 'NOT FOUND')}`)
     }
 
     const events = parseEventsResponse(json, state)

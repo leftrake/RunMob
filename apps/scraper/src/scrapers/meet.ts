@@ -62,8 +62,16 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     const url = rsUrl ?? `https://www.athletic.net/TrackAndField/Meet/${athleticNetId}/Results`
     console.log(`  Navigating to ${url}`)
 
+    // Log all XHR/fetch calls so we can find the correct API endpoint
+    page.on('request', (req) => {
+      if (req.resourceType() === 'xhr' || req.resourceType() === 'fetch') {
+        console.log(`  >> ${req.method()} ${req.url()}`)
+      }
+    })
+
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    await sleep(2000)
+    console.log(`  Final URL: ${page.url()}`)
+    await sleep(3000)
 
     // Grab meet metadata from the page title/header
     const name = await page.$eval('h1, .meet-name, [class*="meetName"]', (el) => el.textContent?.trim() ?? '').catch(() => '')
