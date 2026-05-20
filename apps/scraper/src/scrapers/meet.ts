@@ -37,32 +37,23 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
   try {
     const captured: { events: ScrapedEvent[] } = { events: [] }
 
-    // Intercept AthleticNet's results API — the SPA fetches JSON for each event
-    await page.route('**/api/v1/Meet/GetMeetData**', async (route) => {
-      const response = await route.fetch()
-      const text = await response.text().catch(() => '')
-      console.log(`  GetMeetData status: ${response.status()} | body (first 600): ${text.slice(0, 600)}`)
+    // Passively observe responses the browser makes — CF cookies stay intact this way.
+    // route.fetch() would re-fetch server-side (no cookies) and get 403.
+    page.on('response', async (res) => {
+      const url = res.url()
+      if (!url.includes('/api/v1/Meet/GetMeetData') && !url.includes('/api/v1/Meet/GetResultsData')) return
+      console.log(`  ${url.includes('GetMeetData') ? 'GetMeetData' : 'GetResultsData'} status: ${res.status()}`)
+      if (!res.ok()) return
       try {
+        const text = await res.text()
+        console.log(`  Response body (first 600): ${text.slice(0, 600)}`)
         const json = JSON.parse(text)
         const parsed = parseMeetDataResponse(json)
-        console.log(`  Parsed ${parsed.length} events from GetMeetData`)
+        console.log(`  Parsed ${parsed.length} events`)
         captured.events.push(...parsed)
-      } catch { /* not JSON */ }
-      await route.fulfill({ response, body: text })
-    })
-
-    // Also intercept the results endpoint some newer meets use
-    await page.route('**/api/v1/Meet/GetResultsData**', async (route) => {
-      const response = await route.fetch()
-      const text = await response.text().catch(() => '')
-      console.log(`  GetResultsData status: ${response.status()} | body (first 600): ${text.slice(0, 600)}`)
-      try {
-        const json = JSON.parse(text)
-        const parsed = parseMeetDataResponse(json)
-        console.log(`  Parsed ${parsed.length} events from GetResultsData`)
-        captured.events.push(...parsed)
-      } catch { /* not JSON */ }
-      await route.fulfill({ response, body: text })
+      } catch (err) {
+        console.log(`  Failed to parse response: ${err}`)
+      }
     })
 
     const url = rsUrl ?? `https://www.athletic.net/TrackAndField/meet/${athleticNetId}/results`
