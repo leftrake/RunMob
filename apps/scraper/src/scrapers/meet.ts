@@ -40,23 +40,29 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     // Intercept AthleticNet's results API — the SPA fetches JSON for each event
     await page.route('**/api/v1/Meet/GetMeetData**', async (route) => {
       const response = await route.fetch()
-      const json = await response.json().catch(() => null)
-      if (json) {
+      const text = await response.text().catch(() => '')
+      console.log(`  GetMeetData status: ${response.status()} | body (first 600): ${text.slice(0, 600)}`)
+      try {
+        const json = JSON.parse(text)
         const parsed = parseMeetDataResponse(json)
+        console.log(`  Parsed ${parsed.length} events from GetMeetData`)
         captured.events.push(...parsed)
-      }
-      await route.fulfill({ response })
+      } catch { /* not JSON */ }
+      await route.fulfill({ response, body: text })
     })
 
     // Also intercept the results endpoint some newer meets use
     await page.route('**/api/v1/Meet/GetResultsData**', async (route) => {
       const response = await route.fetch()
-      const json = await response.json().catch(() => null)
-      if (json) {
+      const text = await response.text().catch(() => '')
+      console.log(`  GetResultsData status: ${response.status()} | body (first 600): ${text.slice(0, 600)}`)
+      try {
+        const json = JSON.parse(text)
         const parsed = parseMeetDataResponse(json)
+        console.log(`  Parsed ${parsed.length} events from GetResultsData`)
         captured.events.push(...parsed)
-      }
-      await route.fulfill({ response })
+      } catch { /* not JSON */ }
+      await route.fulfill({ response, body: text })
     })
 
     const url = rsUrl ?? `https://www.athletic.net/TrackAndField/Meet/${athleticNetId}/Results`
