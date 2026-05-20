@@ -59,11 +59,12 @@ export async function searchRecentMeets(
       }
     })
 
-    const targetUrl = `https://www.athletic.net/track-and-field-outdoor/usa/high-school/${stateToSlug(state)}`
+    const today = new Date().toISOString().slice(0, 10)
+    const targetUrl = `https://www.athletic.net/events/usa/${stateToSlug(state)}/${today};level=4`
     console.log(`  Navigating to ${targetUrl}`)
 
-    await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30_000 })
-    await sleep(2000)
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await sleep(4000)
 
     console.log(`  Page title: ${await page.title()}`)
     console.log(`  Page URL: ${page.url()}`)
