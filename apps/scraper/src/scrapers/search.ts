@@ -1,5 +1,3 @@
-import { newPage, sleep } from '../browser.js'
-
 export interface MeetStub {
   athleticNetId: string
   name: string
@@ -10,83 +8,90 @@ export interface MeetStub {
   division: string | null
 }
 
-// AthleticNet meet search API — intercepted from browser network tab.
-// Returns meets for a state within the past N days.
+const BASE_HEADERS = {
+  'accept': 'application/json, text/plain, */*',
+  'accept-language': 'en-US,en;q=0.9',
+  'anet-appinfo': 'web:web:0:240',
+  'content-type': 'application/json',
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'sec-ch-ua': '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-origin',
+  'origin': 'https://www.athletic.net',
+  'referer': 'https://www.athletic.net/events',
+}
+
+async function getSiteRolesToken(): Promise<string | null> {
+  try {
+    const res = await fetch('https://www.athletic.net/api/v1/SignedInUser/GetSignedInUser', {
+      headers: BASE_HEADERS,
+    })
+    if (!res.ok) {
+      console.log(`  GetSignedInUser returned ${res.status}`)
+      return null
+    }
+    const json = await res.json() as Record<string, unknown>
+    const token = json.jwtUserRolesSiteWide as string | null
+    console.log(`  Got site roles token: ${token ? 'yes' : 'no'}`)
+    return token ?? null
+  } catch (err) {
+    console.log(`  Failed to get site roles token: ${err}`)
+    return null
+  }
+}
+
 export async function searchRecentMeets(
   state: string,
   daysBack = 14,
 ): Promise<MeetStub[]> {
-  const { page, context } = await newPage()
-  const meets: MeetStub[] = []
+  const token = await getSiteRolesToken()
+  const headers: Record<string, string> = { ...BASE_HEADERS }
+  if (token) headers['anet-site-roles-token'] = token
 
-  try {
-    const captured: MeetStub[] = []
-    const interceptedUrls: string[] = []
+  const end = new Date()
+  const start = new Date()
+  start.setDate(start.getDate() - daysBack)
 
-    // Cast a wide net — log every athletic.net API call we see
-    await page.route('**athletic.net**', async (route) => {
-      const url = route.request().url()
-      interceptedUrls.push(url)
-
-      if (url.includes('/api/')) {
-        console.log(`  [intercept] ${url}`)
-        const response = await route.fetch()
-        const contentType = response.headers()['content-type'] ?? ''
-        if (contentType.includes('json')) {
-          const json = await response.json().catch(() => null)
-          if (json) {
-            // Try every known field name AthleticNET has used
-            const list =
-              json.meetList ?? json.MeetList ??
-              json.meets ?? json.Meets ??
-              json.results ?? json.Results ??
-              json.data ?? json.Data ??
-              (Array.isArray(json) ? json : null)
-            if (list) {
-              console.log(`  [intercept] found list with ${list.length} items at ${url}`)
-              for (const m of list) {
-                const stub = parseMeetStub(m, state)
-                if (stub) captured.push(stub)
-              }
-            } else {
-              console.log(`  [intercept] JSON keys: ${Object.keys(json).join(', ')}`)
-            }
-          }
-        }
-        await route.fulfill({ response })
-      } else {
-        await route.continue()
-      }
-    })
-
-    const today = new Date().toISOString().slice(0, 10)
-    const targetUrl = `https://www.athletic.net/events/usa/${stateToSlug(state)}/${today};level=4`
-    console.log(`  Navigating to ${targetUrl}`)
-
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-    await sleep(4000)
-
-    console.log(`  Page title: ${await page.title()}`)
-    console.log(`  Page URL: ${page.url()}`)
-    console.log(`  Total athletic.net requests intercepted: ${interceptedUrls.length}`)
-
-    meets.push(...captured)
-
-    // If interception didn't fire, fall back to DOM parsing
-    if (meets.length === 0) {
-      console.log('  API interception found nothing — trying DOM parsing')
-      // Log a snippet of the page body to understand current structure
-      const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 1000))
-      console.log(`  Page body snippet:\n${bodySnippet}`)
-      const domMeets = await parseMeetListFromDom(page, state)
-      console.log(`  DOM parsing found ${domMeets.length} meets`)
-      meets.push(...domMeets)
-    }
-  } finally {
-    await context.close()
+  const body = {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+    levelMask: 0,
+    sportMask: 0,
+    country: 'US',
+    state: state.toUpperCase(),
+    distanceKM: 0,
+    filterTerm: '',
+    location: '',
   }
 
-  return meets.filter((m) => {
+  console.log(`  Searching ${body.start} to ${body.end} in ${state}`)
+
+  const res = await fetch('https://www.athletic.net/api/v1/Event/Events', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    console.log(`  Events API returned ${res.status}: ${await res.text().catch(() => '')}`)
+    return []
+  }
+
+  const json = await res.json() as Record<string, unknown>
+  console.log(`  Response keys: ${Object.keys(json).join(', ')}`)
+
+  // Log first item to understand structure
+  const firstList = Object.values(json).find((v) => Array.isArray(v)) as unknown[] | undefined
+  if (firstList?.length) {
+    console.log(`  First item keys: ${Object.keys(firstList[0] as object).join(', ')}`)
+    console.log(`  First item: ${JSON.stringify(firstList[0]).slice(0, 300)}`)
+  }
+
+  const events = parseEventsResponse(json, state)
+  return events.filter((m) => {
     const d = new Date(m.date)
     const cutoff = new Date()
     cutoff.setDate(cutoff.getDate() - daysBack)
@@ -94,13 +99,51 @@ export async function searchRecentMeets(
   })
 }
 
+function parseEventsResponse(json: Record<string, unknown>, state: string): MeetStub[] {
+  const stubs: MeetStub[] = []
+
+  // Try all likely top-level array fields
+  const list =
+    (json.events as unknown[]) ??
+    (json.Events as unknown[]) ??
+    (json.meets as unknown[]) ??
+    (json.Meets as unknown[]) ??
+    (json.results as unknown[]) ??
+    (json.Results as unknown[]) ??
+    (json.data as unknown[]) ??
+    (Array.isArray(json) ? json as unknown[] : null) ??
+    // Sometimes the list is the first array value in the object
+    (Object.values(json).find((v) => Array.isArray(v)) as unknown[] | undefined) ??
+    []
+
+  for (const raw of list) {
+    const m = raw as Record<string, unknown>
+    const stub = parseMeetStub(m, state)
+    if (stub) stubs.push(stub)
+  }
+
+  return stubs
+}
+
 function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | null {
   try {
-    const id = String(raw.MeetID ?? raw.meetId ?? raw.id ?? '')
-    const name = String(raw.MeetName ?? raw.meetName ?? raw.name ?? '')
-    const date = String(raw.StartDate ?? raw.startDate ?? raw.date ?? '')
-    const location = String(raw.Location ?? raw.location ?? raw.venue ?? '')
-    const divisionRaw = String(raw.Division ?? raw.division ?? '').toLowerCase()
+    const id = String(
+      raw.meetId ?? raw.MeetId ?? raw.meetID ?? raw.MeetID ??
+      raw.eventId ?? raw.EventId ?? raw.id ?? raw.Id ?? ''
+    )
+    const name = String(
+      raw.meetName ?? raw.MeetName ?? raw.eventName ?? raw.EventName ??
+      raw.name ?? raw.Name ?? ''
+    )
+    const date = String(
+      raw.startDate ?? raw.StartDate ?? raw.date ?? raw.Date ??
+      raw.eventDate ?? raw.EventDate ?? ''
+    )
+    const location = String(
+      raw.location ?? raw.Location ?? raw.venue ?? raw.Venue ??
+      raw.city ?? raw.City ?? ''
+    )
+    const divisionRaw = String(raw.division ?? raw.Division ?? raw.level ?? raw.Level ?? '').toLowerCase()
 
     if (!id || !name) return null
 
@@ -116,55 +159,6 @@ function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | 
   } catch {
     return null
   }
-}
-
-// DOM fallback: parse the meet list table if the API interception missed
-async function parseMeetListFromDom(
-  page: import('playwright').Page,
-  state: string,
-): Promise<MeetStub[]> {
-  return page.evaluate((st) => {
-    const rows = document.querySelectorAll('a[href*="/TrackAndField/Meet/"]')
-    const seen = new Set<string>()
-    const result: MeetStub[] = []
-
-    for (const a of rows) {
-      const href = (a as HTMLAnchorElement).href
-      const match = href.match(/\/Meet\/(\d+)/)
-      if (!match) continue
-      const id = match[1]
-      if (seen.has(id)) continue
-      seen.add(id)
-
-      const row = a.closest('tr') ?? a.parentElement
-      const dateEl = row?.querySelector('[data-date], .date, td:nth-child(2)')
-      const locEl = row?.querySelector('.location, td:nth-child(3)')
-
-      result.push({
-        athleticNetId: id,
-        name: a.textContent?.trim() ?? '',
-        date: dateEl?.textContent?.trim() ?? '',
-        location: locEl?.textContent?.trim() ?? '',
-        state: st,
-        level: 'hs',
-        division: null,
-      })
-    }
-    return result
-  }, state) as Promise<MeetStub[]>
-}
-
-function stateToSlug(state: string): string {
-  const map: Record<string, string> = {
-    NC: 'north-carolina', VA: 'virginia', SC: 'south-carolina',
-    GA: 'georgia', TN: 'tennessee', FL: 'florida', TX: 'texas',
-    CA: 'california', NY: 'new-york', OH: 'ohio', PA: 'pennsylvania',
-    IL: 'illinois', MI: 'michigan', NJ: 'new-jersey', MA: 'massachusetts',
-    MD: 'maryland', CO: 'colorado', WA: 'washington', OR: 'oregon',
-    AZ: 'arizona', MN: 'minnesota', WI: 'wisconsin', IN: 'indiana',
-    MO: 'missouri', AL: 'alabama', KY: 'kentucky', LA: 'louisiana',
-  }
-  return map[state.toUpperCase()] ?? state.toLowerCase()
 }
 
 function normalizeDate(raw: string): string {
@@ -184,15 +178,14 @@ function inferDivision(division: string): string | null {
   return match ? match[1].toUpperCase() : null
 }
 
-// Run directly: pnpm scrape:search
-if (process.argv[1]?.includes('search')) {
-  const state = process.argv[2] ?? 'NC'
-  console.log(`Searching for recent meets in ${state}...`)
-  searchRecentMeets(state, 14)
-    .then((meets) => {
-      console.log(`Found ${meets.length} meets:`)
-      console.dir(meets, { depth: null })
-    })
-    .catch(console.error)
-    .finally(() => process.exit(0))
+function stateToSlug(state: string): string {
+  const map: Record<string, string> = {
+    NC: 'north-carolina', VA: 'virginia', SC: 'south-carolina',
+    GA: 'georgia', TN: 'tennessee', FL: 'florida', TX: 'texas',
+    CA: 'california', NY: 'new-york', OH: 'ohio', PA: 'pennsylvania',
+  }
+  return map[state.toUpperCase()] ?? state.toLowerCase()
 }
+
+// suppress unused warning — stateToSlug may be used in future URL-based fallback
+void stateToSlug
