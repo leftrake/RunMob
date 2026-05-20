@@ -9,6 +9,10 @@ on:
         description: 'Comma-separated states to scrape (e.g. NC,VA)'
         required: false
         default: ''
+      days_back:
+        description: 'How many days back to search for meets'
+        required: false
+        default: ''
       meet_id:
         description: 'Scrape a single meet by AthleticNet ID (optional)'
         required: false
@@ -47,5 +51,5 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SCRAPE_STATES: ${{ github.event.inputs.states || vars.SCRAPE_STATES || 'NC' }}
-          SCRAPE_DAYS_BACK: ${{ vars.SCRAPE_DAYS_BACK || '14' }}
+          SCRAPE_DAYS_BACK: ${{ github.event.inputs.days_back || vars.SCRAPE_DAYS_BACK || '14' }}
           SCRAPE_ATHLETES: ${{ vars.SCRAPE_ATHLETES || 'false' }}
