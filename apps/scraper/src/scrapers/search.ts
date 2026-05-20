@@ -21,35 +21,61 @@ export async function searchRecentMeets(
 
   try {
     const captured: MeetStub[] = []
+    const interceptedUrls: string[] = []
 
-    // Intercept the JSON search API AthleticNet's SPA calls internally
-    await page.route('**/api/v1/Meet/GetMeetList**', async (route) => {
-      const response = await route.fetch()
-      const json = await response.json().catch(() => null)
-      if (json?.meetList) {
-        for (const m of json.meetList) {
-          const stub = parseMeetStub(m, state)
-          if (stub) captured.push(stub)
+    // Cast a wide net — log every athletic.net API call we see
+    await page.route('**athletic.net**', async (route) => {
+      const url = route.request().url()
+      interceptedUrls.push(url)
+
+      if (url.includes('/api/') || url.includes('GetMeet') || url.includes('meet')) {
+        console.log(`  [intercept] ${url}`)
+        const response = await route.fetch()
+        const contentType = response.headers()['content-type'] ?? ''
+        if (contentType.includes('json')) {
+          const json = await response.json().catch(() => null)
+          if (json) {
+            // Try every known field name AthleticNET has used
+            const list =
+              json.meetList ?? json.MeetList ??
+              json.meets ?? json.Meets ??
+              json.results ?? json.Results ??
+              json.data ?? json.Data ??
+              (Array.isArray(json) ? json : null)
+            if (list) {
+              console.log(`  [intercept] found list with ${list.length} items at ${url}`)
+              for (const m of list) {
+                const stub = parseMeetStub(m, state)
+                if (stub) captured.push(stub)
+              }
+            } else {
+              console.log(`  [intercept] JSON keys: ${Object.keys(json).join(', ')}`)
+            }
+          }
         }
+        await route.fulfill({ response })
+      } else {
+        await route.continue()
       }
-      await route.fulfill({ response })
     })
 
-    // Navigate to AthleticNet state TF meet list — this triggers the API call above
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - daysBack)
+    const targetUrl = `https://www.athletic.net/TrackAndField/State/${encodeURIComponent(state)}/Meets`
+    console.log(`  Navigating to ${targetUrl}`)
 
-    await page.goto(
-      `https://www.athletic.net/TrackAndField/State/${encodeURIComponent(state)}/Meets`,
-      { waitUntil: 'networkidle', timeout: 30_000 },
-    )
+    await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30_000 })
+    await sleep(2000)
 
-    await sleep(1000)
+    console.log(`  Page title: ${await page.title()}`)
+    console.log(`  Page URL: ${page.url()}`)
+    console.log(`  Total athletic.net requests intercepted: ${interceptedUrls.length}`)
+
     meets.push(...captured)
 
     // If interception didn't fire, fall back to DOM parsing
     if (meets.length === 0) {
+      console.log('  API interception found nothing — trying DOM parsing')
       const domMeets = await parseMeetListFromDom(page, state)
+      console.log(`  DOM parsing found ${domMeets.length} meets`)
       meets.push(...domMeets)
     }
   } finally {
