@@ -28,16 +28,16 @@ importers:
       hono:
         specifier: ^4.4.0
         version: 4.12.21
-    devDependencies:
-      '@types/node':
-        specifier: ^20.0.0
-        version: 20.19.41
       prisma:
         specifier: ^5.14.0
         version: 5.22.0
       tsx:
         specifier: ^4.11.0
         version: 4.22.3
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.41
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
