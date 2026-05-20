@@ -1,4 +1,4 @@
-import type { RatingLabel, RatingTier } from './types'
+import type { RatingLabel, RatingTier } from './types.js'
 
 export const RATING_TIERS: RatingTier[] = [
   { min: 9.5, label: 'Legendary',     color: '#22c55e' },
