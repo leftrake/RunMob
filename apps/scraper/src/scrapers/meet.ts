@@ -37,11 +37,11 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
   try {
     const captured: { events: ScrapedEvent[] } = { events: [] }
 
-    // Passively observe responses the browser makes — CF cookies stay intact this way.
+    // Passively observe all athletic.net API responses to find the results endpoint
     page.on('response', async (res) => {
-      const url = res.url()
-      if (!url.includes('athletic.net/api/v1/Meet/')) return
-      const endpoint = url.split('/api/v1/Meet/')[1]?.split('?')[0]
+      const resUrl = res.url()
+      if (!resUrl.includes('athletic.net/api/v1/')) return
+      const endpoint = resUrl.split('/api/v1/')[1]?.split('?')[0]
       if (!res.ok()) return
       try {
         const text = await res.text()
@@ -60,7 +60,14 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     })
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    console.log(`  Final URL: ${page.url()}`)
+    console.log(`  Base results URL: ${page.url()}`)
+    await sleep(2000)
+
+    // Navigate into the first event results page to trigger the per-event results API call
+    const eventTestUrl = `${url}/m/1/100m`
+    console.log(`  Navigating to event test URL: ${eventTestUrl}`)
+    await page.goto(eventTestUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    console.log(`  Event URL landed: ${page.url()}`)
     await sleep(3000)
 
     // Grab meet metadata from the page title/header
