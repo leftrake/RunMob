@@ -1,4 +1,8 @@
 packages:
   - 'apps/*'
   - 'packages/*'
-approveBuilds: false
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - esbuild
+  - prisma
