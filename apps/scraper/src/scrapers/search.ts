@@ -8,6 +8,7 @@ export interface MeetStub {
   state: string
   level: 'hs' | 'college' | 'open'
   division: string | null
+  rsUrl: string | null   // results page URL from AthleticNET
 }
 
 export async function searchRecentMeets(
@@ -79,8 +80,10 @@ export async function searchRecentMeets(
 
     const firstList = Object.values(json).find((v) => Array.isArray(v)) as unknown[] | undefined
     if (firstList?.length) {
-      console.log(`  First item keys: ${Object.keys(firstList[0] as object).join(', ')}`)
-      console.log(`  First item: ${JSON.stringify(firstList[0]).slice(0, 300)}`)
+      const first = firstList[0] as Record<string, unknown>
+      console.log(`  First item keys: ${Object.keys(first).join(', ')}`)
+      console.log(`  First item: ${JSON.stringify(first).slice(0, 300)}`)
+      console.log(`  rsUrl value: ${JSON.stringify(first.rsUrl ?? first.RsUrl ?? 'NOT FOUND')}`)
     }
 
     const events = parseEventsResponse(json, state)
@@ -91,7 +94,7 @@ export async function searchRecentMeets(
       return d >= cutoff
     })
   } finally {
-    await context.close()
+    await page.close()
   }
 }
 
@@ -141,6 +144,11 @@ function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | 
 
     if (!id || !name) return null
 
+    const rsUrlRaw = raw.rsUrl ?? raw.RsUrl ?? raw.resultsUrl ?? raw.ResultsUrl ?? null
+    const rsUrl = rsUrlRaw
+      ? (String(rsUrlRaw).startsWith('http') ? String(rsUrlRaw) : `https://www.athletic.net${String(rsUrlRaw)}`)
+      : null
+
     return {
       athleticNetId: id,
       name,
@@ -149,6 +157,7 @@ function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | 
       state,
       level: inferLevel(divisionRaw),
       division: inferDivision(divisionRaw),
+      rsUrl,
     }
   } catch {
     return null
