@@ -65,7 +65,7 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
       await route.fulfill({ response, body: text })
     })
 
-    const url = rsUrl ?? `https://www.athletic.net/TrackAndField/Meet/${athleticNetId}/Results`
+    const url = rsUrl ?? `https://www.athletic.net/TrackAndField/meet/${athleticNetId}/results`
     console.log(`  Navigating to ${url}`)
 
     // Log all XHR/fetch calls so we can find the correct API endpoint
