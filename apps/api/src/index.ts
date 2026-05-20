@@ -9,7 +9,11 @@ import { searchRouter } from './routes/search.js'
 const app = new Hono()
 
 app.use('*', logger())
-app.use('*', cors({ origin: ['http://localhost:5173', 'http://localhost:4173'] }))
+const allowedOrigins = process.env.FRONTEND_URL
+  ? [process.env.FRONTEND_URL]
+  : ['http://localhost:5173', 'http://localhost:4173']
+
+app.use('*', cors({ origin: allowedOrigins }))
 
 app.route('/api/meets', meetsRouter)
 app.route('/api/athletes', athletesRouter)
