@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Meet {
+  id         String      @id @default(cuid())
+  name       String
+  date       DateTime
+  location   String
+  level      String      // "hs" | "college" | "open"
+  division   String?
+  state      String
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  events     MeetEvent[]
+}
+
+model MeetEvent {
+  id        String          @id @default(cuid())
+  meetId    String
+  eventName String
+  gender    String          // "M" | "F"
+  meet      Meet            @relation(fields: [meetId], references: [id], onDelete: Cascade)
+  results   AthleteResult[]
+}
+
+model Athlete {
+  id           String          @id @default(cuid())
+  name         String
+  school       String
+  state        String
+  gradYear     Int
+  gender       String          // "M" | "F"
+  events       String[]
+  seasonBests  Json            @default("{}")
+  allTimePRs   Json            @default("{}")
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  results      AthleteResult[]
+}
+
+model AthleteResult {
+  id              String     @id @default(cuid())
+  athleteId       String
+  meetEventId     String
+  place           Int
+  time            Float
+  displayTime     String
+  teamName        String
+  rating          Float
+  ratingLabel     String
+  prAtMeet        Boolean    @default(false)
+  seasonBestAtMeet Boolean   @default(false)
+  createdAt       DateTime   @default(now())
+  athlete         Athlete    @relation(fields: [athleteId], references: [id])
+  meetEvent       MeetEvent  @relation(fields: [meetEventId], references: [id], onDelete: Cascade)
+}
