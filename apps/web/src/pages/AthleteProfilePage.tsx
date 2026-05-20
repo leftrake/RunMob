@@ -6,34 +6,16 @@ import { formatShortDate } from '../lib/utils'
 import { RatingBadge } from '../components/RatingBadge'
 import { Spinner } from '../components/Spinner'
 
-interface AthleteWithResults extends Athlete {
-  results: AthleteResultWithMeet[]
-}
-
-interface AthleteResultWithMeet {
-  id: string
-  meetId: string
-  meetName: string
-  meetDate: string
-  eventName: string
-  place: number
-  displayTime: string
-  rating: number
-  ratingLabel: string
-  prAtMeet: boolean
-  seasonBestAtMeet: boolean
-}
-
 export function AthleteProfilePage() {
   const { id } = useParams<{ id: string }>()
-  const [athlete, setAthlete] = useState<AthleteWithResults | null>(null)
+  const [athlete, setAthlete] = useState<Athlete | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
     api.athletes.get(id)
-      .then((data) => setAthlete(data as unknown as AthleteWithResults))
+      .then(setAthlete)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
   }, [id])

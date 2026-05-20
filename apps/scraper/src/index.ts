@@ -58,12 +58,15 @@ export async function runScrapeJob(): Promise<void> {
           continue
         }
 
-        // Merge stub metadata (name, date, location, state) with scraped events
+        // Merge stub metadata with scraped events — stub is authoritative for fields the scraper doesn't extract
         const enriched = {
           ...scraped,
           name: scraped.name || stub.name,
           date: scraped.date || stub.date,
           location: scraped.location || stub.location,
+          level: stub.level,
+          division: stub.division,
+          state: stub.state,
         }
 
         const result = await ingestMeet(enriched, { scrapeAthletes: SCRAPE_ATHLETES })

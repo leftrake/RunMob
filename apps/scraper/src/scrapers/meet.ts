@@ -23,6 +23,9 @@ export interface ScrapedMeet {
   name: string
   date: string
   location: string
+  level?: 'hs' | 'college' | 'open'
+  division?: string | null
+  state?: string
   events: ScrapedEvent[]
 }
 

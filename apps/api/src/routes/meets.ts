@@ -8,14 +8,18 @@ meetsRouter.get('/', async (c) => {
     orderBy: { date: 'desc' },
     include: {
       events: {
-        include: { results: true },
+        include: {
+          results: {
+            include: { athlete: true },
+          },
+        },
       },
     },
   })
 
   const summaries = meets.map((meet) => {
     const allResults = meet.events.flatMap((e) => e.results)
-    const topResult = allResults.sort((a, b) => b.rating - a.rating)[0]
+    const topResult = [...allResults].sort((a, b) => b.rating - a.rating)[0]
     return {
       id: meet.id,
       name: meet.name,
@@ -27,7 +31,7 @@ meetsRouter.get('/', async (c) => {
       athleteCount: new Set(allResults.map((r) => r.athleteId)).size,
       eventCount: meet.events.length,
       topRating: topResult?.rating ?? null,
-      topRatedAthleteName: null as string | null,
+      topRatedAthleteName: topResult?.athlete?.name ?? null,
     }
   })
 

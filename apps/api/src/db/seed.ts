@@ -107,8 +107,8 @@ async function main() {
         const athlete = athletes[r.athleteIdx]
         const timeSeconds = parseTimeToSeconds(r.displayTime)
         const sbKey = eventName
-        const sb = (athlete as unknown as { seasonBests: Record<string, string> }).seasonBests[sbKey]
-        const pr = (athlete as unknown as { allTimePRs: Record<string, string> }).allTimePRs[sbKey]
+        const sb = (athlete.seasonBests as Record<string, string>)[sbKey]
+        const pr = (athlete.allTimePRs as Record<string, string>)[sbKey]
 
         const sbSeconds = sb ? parseTimeToSeconds(sb) : null
         const prSeconds = pr ? parseTimeToSeconds(pr) : null
@@ -133,7 +133,7 @@ async function main() {
             place: i + 1,
             time: timeSeconds,
             displayTime: r.displayTime,
-            teamName: (athlete as unknown as { school: string }).school,
+            teamName: athlete.school,
             rating,
             ratingLabel: getRatingLabel(rating),
             prAtMeet,
