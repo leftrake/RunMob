@@ -91,7 +91,7 @@ export async function searchRecentMeets(
       return d >= cutoff
     })
   } finally {
-    await context.close()
+    await page.close()
   }
 }
 

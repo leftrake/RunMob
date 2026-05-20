@@ -62,7 +62,7 @@ export async function scrapeMeet(athleticNetId: string): Promise<ScrapedMeet | n
     const url = `https://www.athletic.net/TrackAndField/Meet/${athleticNetId}/Results`
     console.log(`  Navigating to ${url}`)
 
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 45_000 })
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
     await sleep(2000)
 
     // Grab meet metadata from the page title/header
@@ -90,7 +90,7 @@ export async function scrapeMeet(athleticNetId: string): Promise<ScrapedMeet | n
     console.error(`  Error scraping meet ${athleticNetId}:`, err)
     return null
   } finally {
-    await context.close()
+    await page.close()
   }
 }
 
