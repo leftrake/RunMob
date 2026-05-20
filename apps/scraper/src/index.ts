@@ -55,7 +55,7 @@ export async function runScrapeJob(): Promise<void> {
       console.log(`\n  Scraping: ${stub.name} (${stub.athleticNetId})`)
 
       try {
-        const scraped = await scrapeMeet(stub.athleticNetId)
+        const scraped = await scrapeMeet(stub.athleticNetId, stub.rsUrl)
         if (!scraped || scraped.events.length === 0) {
           console.log(`  No results found — skipping`)
           continue

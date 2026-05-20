@@ -8,6 +8,7 @@ export interface MeetStub {
   state: string
   level: 'hs' | 'college' | 'open'
   division: string | null
+  rsUrl: string | null   // results page URL from AthleticNET
 }
 
 export async function searchRecentMeets(
@@ -141,6 +142,11 @@ function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | 
 
     if (!id || !name) return null
 
+    const rsUrlRaw = raw.rsUrl ?? raw.RsUrl ?? raw.resultsUrl ?? raw.ResultsUrl ?? null
+    const rsUrl = rsUrlRaw
+      ? (String(rsUrlRaw).startsWith('http') ? String(rsUrlRaw) : `https://www.athletic.net${String(rsUrlRaw)}`)
+      : null
+
     return {
       athleticNetId: id,
       name,
@@ -149,6 +155,7 @@ function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | 
       state,
       level: inferLevel(divisionRaw),
       division: inferDivision(divisionRaw),
+      rsUrl,
     }
   } catch {
     return null

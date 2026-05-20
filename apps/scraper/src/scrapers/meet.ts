@@ -31,7 +31,7 @@ export interface ScrapedMeet {
 
 const FIELD_EVENTS = new Set(['High Jump', 'Long Jump', 'Triple Jump', 'Pole Vault', 'Shot Put', 'Discus', 'Javelin', 'Hammer'])
 
-export async function scrapeMeet(athleticNetId: string): Promise<ScrapedMeet | null> {
+export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): Promise<ScrapedMeet | null> {
   const { page, context } = await newPage()
 
   try {
@@ -59,7 +59,7 @@ export async function scrapeMeet(athleticNetId: string): Promise<ScrapedMeet | n
       await route.fulfill({ response })
     })
 
-    const url = `https://www.athletic.net/TrackAndField/Meet/${athleticNetId}/Results`
+    const url = rsUrl ?? `https://www.athletic.net/TrackAndField/Meet/${athleticNetId}/Results`
     console.log(`  Navigating to ${url}`)
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
