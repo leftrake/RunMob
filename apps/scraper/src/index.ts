@@ -10,6 +10,8 @@ const STATES = (process.env.SCRAPE_STATES ?? 'NC').split(',').map((s) => s.trim(
 const DAYS_BACK = parseInt(process.env.SCRAPE_DAYS_BACK ?? '14')
 // Whether to also scrape individual athlete profiles (slower, more data)
 const SCRAPE_ATHLETES = process.env.SCRAPE_ATHLETES === 'true'
+// Max meets to scrape per run (0 = no limit)
+const SCRAPE_LIMIT = parseInt(process.env.SCRAPE_LIMIT ?? '0')
 // Cron schedule — default every 6 hours during track season
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE ?? '0 */6 * * *'
 
@@ -31,9 +33,10 @@ export async function runScrapeJob(): Promise<void> {
       continue
     }
 
-    console.log(`  Found ${stubs.length} meets`)
+    const limited = SCRAPE_LIMIT > 0 ? stubs.slice(0, SCRAPE_LIMIT) : stubs
+    console.log(`  Found ${stubs.length} meets${SCRAPE_LIMIT > 0 ? ` (capped at ${SCRAPE_LIMIT})` : ''}`)
 
-    for (const stub of stubs) {
+    for (const stub of limited) {
       // Skip if we already have up-to-date data for this meet
       const existing = await prisma.meet.findUnique({
         where: { id: stub.athleticNetId },
