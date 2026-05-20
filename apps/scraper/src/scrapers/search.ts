@@ -59,7 +59,7 @@ export async function searchRecentMeets(
       }
     })
 
-    const targetUrl = `https://www.athletic.net/TrackAndField/State/${encodeURIComponent(state)}/Meets`
+    const targetUrl = `https://www.athletic.net/track-and-field-outdoor/usa/high-school/${stateToSlug(state)}`
     console.log(`  Navigating to ${targetUrl}`)
 
     await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30_000 })
@@ -74,6 +74,9 @@ export async function searchRecentMeets(
     // If interception didn't fire, fall back to DOM parsing
     if (meets.length === 0) {
       console.log('  API interception found nothing — trying DOM parsing')
+      // Log a snippet of the page body to understand current structure
+      const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 1000))
+      console.log(`  Page body snippet:\n${bodySnippet}`)
       const domMeets = await parseMeetListFromDom(page, state)
       console.log(`  DOM parsing found ${domMeets.length} meets`)
       meets.push(...domMeets)
@@ -148,6 +151,19 @@ async function parseMeetListFromDom(
     }
     return result
   }, state) as Promise<MeetStub[]>
+}
+
+function stateToSlug(state: string): string {
+  const map: Record<string, string> = {
+    NC: 'north-carolina', VA: 'virginia', SC: 'south-carolina',
+    GA: 'georgia', TN: 'tennessee', FL: 'florida', TX: 'texas',
+    CA: 'california', NY: 'new-york', OH: 'ohio', PA: 'pennsylvania',
+    IL: 'illinois', MI: 'michigan', NJ: 'new-jersey', MA: 'massachusetts',
+    MD: 'maryland', CO: 'colorado', WA: 'washington', OR: 'oregon',
+    AZ: 'arizona', MN: 'minnesota', WI: 'wisconsin', IN: 'indiana',
+    MO: 'missouri', AL: 'alabama', KY: 'kentucky', LA: 'louisiana',
+  }
+  return map[state.toUpperCase()] ?? state.toLowerCase()
 }
 
 function normalizeDate(raw: string): string {
