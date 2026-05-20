@@ -38,22 +38,15 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     const captured: { events: ScrapedEvent[] } = { events: [] }
 
     // Passively observe responses the browser makes — CF cookies stay intact this way.
-    // route.fetch() would re-fetch server-side (no cookies) and get 403.
     page.on('response', async (res) => {
       const url = res.url()
-      if (!url.includes('/api/v1/Meet/GetMeetData') && !url.includes('/api/v1/Meet/GetResultsData')) return
-      console.log(`  ${url.includes('GetMeetData') ? 'GetMeetData' : 'GetResultsData'} status: ${res.status()}`)
+      if (!url.includes('athletic.net/api/v1/Meet/')) return
+      const endpoint = url.split('/api/v1/Meet/')[1]?.split('?')[0]
       if (!res.ok()) return
       try {
         const text = await res.text()
-        console.log(`  Response body (first 600): ${text.slice(0, 600)}`)
-        const json = JSON.parse(text)
-        const parsed = parseMeetDataResponse(json)
-        console.log(`  Parsed ${parsed.length} events`)
-        captured.events.push(...parsed)
-      } catch (err) {
-        console.log(`  Failed to parse response: ${err}`)
-      }
+        console.log(`  [${endpoint}] body (first 800): ${text.slice(0, 800)}`)
+      } catch { /* ignore */ }
     })
 
     const url = rsUrl ?? `https://www.athletic.net/TrackAndField/meet/${athleticNetId}/results`
