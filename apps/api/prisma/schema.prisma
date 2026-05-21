@@ -48,6 +48,7 @@ model AthleteResult {
   id              String     @id @default(cuid())
   athleteId       String
   meetEventId     String
+  round           String     @default("Finals")
   place           Int
   time            Float
   displayTime     String

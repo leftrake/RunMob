@@ -134,14 +134,16 @@ export async function ingestMeet(
       }
 
       // Upsert result (keyed on athlete + meetEvent)
+      const round = r.round ?? 'Finals'
       await prisma.athleteResult.upsert({
         where: {
-          id: `${athlete.id}-${meetEvent.id}`,
+          id: `${athlete.id}-${meetEvent.id}-${round}`,
         },
         create: {
-          id: `${athlete.id}-${meetEvent.id}`,
+          id: `${athlete.id}-${meetEvent.id}-${round}`,
           athleteId: athlete.id,
           meetEventId: meetEvent.id,
+          round,
           place: r.place,
           time: r.timeSeconds,
           displayTime: r.displayTime,

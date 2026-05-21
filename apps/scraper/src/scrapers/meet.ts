@@ -10,6 +10,7 @@ export interface ScrapedResult {
   timeSeconds: number
   gender: 'M' | 'F'
   wind?: string
+  round: string
 }
 
 export interface ScrapedEvent {
@@ -167,57 +168,56 @@ function parseResultsData3Response(
 ): ScrapedEvent | null {
   try {
     const outerList = (json.resultsTF as unknown[][]) ?? []
-    const rawResults = outerList.flat()
-    if (rawResults.length === 0) return null
+    if (outerList.length === 0 || outerList.every((arr) => arr.length === 0)) return null
+
+    const roundLabels = (json.rounds as Array<{ RoundDesc: string }> | undefined) ?? []
 
     const results: ScrapedResult[] = []
 
-    for (const raw of rawResults) {
-      const r = raw as Record<string, unknown>
-      const displayTime = String(r.Result ?? '').trim()
-      if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
-      // Field event formats: "15.23m" (meters) or "50-01.00" (feet-inches)
-      if (/m$/.test(displayTime) || /-\d{2}/.test(displayTime)) continue
+    for (let ri = 0; ri < outerList.length; ri++) {
+      const round = roundLabels[ri]?.RoundDesc ?? (ri === 0 ? 'Finals' : `Round ${ri + 1}`)
+      const roundResults: ScrapedResult[] = []
 
-      let timeSeconds: number
-      try {
-        timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
-        if (isNaN(timeSeconds) || timeSeconds <= 0) continue
-      } catch { continue }
+      for (const raw of outerList[ri]) {
+        const r = raw as Record<string, unknown>
+        const displayTime = String(r.Result ?? '').trim()
+        if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
+        if (/m$/.test(displayTime) || /-\d{2}/.test(displayTime)) continue
 
-      const firstName = String(r.FirstName ?? '').trim()
-      const lastName  = String(r.LastName  ?? '').trim()
-      const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
-      if (!athleteName) continue
+        let timeSeconds: number
+        try {
+          timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
+          if (isNaN(timeSeconds) || timeSeconds <= 0) continue
+        } catch { continue }
 
-      results.push({
-        place: parseInt(String(r.Place ?? '0')) || results.length + 1,
-        athleteName,
-        athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
-        school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
-        displayTime,
-        timeSeconds,
-        gender,
-        wind: r.Wind != null ? String(r.Wind) : undefined,
-      })
+        const firstName = String(r.FirstName ?? '').trim()
+        const lastName  = String(r.LastName  ?? '').trim()
+        const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
+        if (!athleteName) continue
+
+        roundResults.push({
+          place: parseInt(String(r.Place ?? '0')) || roundResults.length + 1,
+          athleteName,
+          athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
+          school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
+          displayTime,
+          timeSeconds,
+          gender,
+          wind: r.Wind != null ? String(r.Wind) : undefined,
+          round,
+        })
+      }
+
+      results.push(...roundResults)
     }
 
     if (results.length === 0) return null
-
-    // Deduplicate by athlete: keep best (lowest) time — handles prelims+finals on same page
-    const best = new Map<string, ScrapedResult>()
-    for (const r of results) {
-      const existing = best.get(r.athleteName)
-      if (!existing || r.timeSeconds < existing.timeSeconds) best.set(r.athleteName, r)
-    }
-    const deduped = Array.from(best.values()).sort((a, b) => a.timeSeconds - b.timeSeconds)
-    deduped.forEach((r, i) => { r.place = i + 1 })
 
     let eventName = TRACK_EVENTS[eventId]
     if (!eventName) return null
     if (eventId === 9 && gender === 'F') eventName = '100mH'
 
-    return { eventName, gender, results: deduped }
+    return { eventName, gender, results }
   } catch {
     return null
   }
