@@ -100,21 +100,25 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
             }, 20_000)
             ep.on('response', async (res) => {
               if (!res.url().includes('GetResultsData3')) return
-              clearTimeout(t)
               if (!res.ok()) {
-                console.log(`    GetResultsData3 ${res.status()} for ${eventUrl}`)
-                resolve(null)
+                // 429 = rate limited, give up on this event
+                if (res.status() === 429) {
+                  clearTimeout(t)
+                  console.log(`    GetResultsData3 429 for ${eventUrl}`)
+                  resolve(null)
+                }
                 return
               }
               try {
                 const json = await res.json() as Record<string, unknown>
                 const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
-                if (!parsed) {
-                  console.log(`    GetResultsData3 empty for ${eventUrl}: ${JSON.stringify(json).slice(0, 300)}`)
+                if (parsed && parsed.results.length > 0) {
+                  clearTimeout(t)
+                  resolve(parsed)
                 }
-                resolve(parsed)
+                // empty resultsTF = first/metadata call — keep listening for the results call
               } catch {
-                resolve(null)
+                // parse error — keep listening
               }
             })
           })
