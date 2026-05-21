@@ -132,12 +132,12 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
           // Wait up to 10s total; exit 2s after last results response.
-          // Only use noResults to bail early when we have zero results — a "no results"
-          // response can fire before the real results response on some events.
+          // noResults can fire before the real results on some events (relay events especially)
+          // so enforce a 2s minimum before giving up on a noResults signal.
           const startedAt = Date.now()
           while (Date.now() - startedAt < 10_000) {
             await sleep(200)
-            if (noResults && responseCount === 0) break
+            if (noResults && responseCount === 0 && Date.now() - startedAt > 2_000) break
             if (responseCount > 0 && Date.now() - lastResponseAt > 2_000) break
           }
 
