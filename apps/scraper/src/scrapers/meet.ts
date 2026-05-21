@@ -100,9 +100,6 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
               resolve(null)
             }, 20_000)
             ep.on('response', async (res) => {
-              if (res.url().includes('/api/v1/')) {
-                console.log(`    API ${res.status()} ${res.url().replace('https://www.athletic.net', '')}`)
-              }
               if (!res.url().includes('GetResultsData3')) return
               if (!res.ok()) {
                 // 429 = rate limited, give up on this event
@@ -129,12 +126,6 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          // SPA loads round list first (empty resultsTF), then needs a round selected to fetch results.
-          // Wait for the UI to render, then click Finals to trigger the second GetResultsData3 call.
-          await sleep(1500)
-          try {
-            await ep.click('text=Finals', { timeout: 4000 })
-          } catch { /* already selected or not present — SPA will auto-load */ }
           const result = await resultPromise
           if (result && result.results.length > 0) {
             allEvents.push(result)
