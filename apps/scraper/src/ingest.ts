@@ -56,6 +56,13 @@ export async function ingestMeet(
     })
     eventsUpserted++
 
+    // Log round breakdown so we can verify prelims/finals are correctly split
+    const roundCounts = scrapedEvent.results.reduce<Record<string, number>>((acc, r) => {
+      acc[r.round] = (acc[r.round] ?? 0) + 1
+      return acc
+    }, {})
+    console.log(`  ${scrapedEvent.eventName} ${scrapedEvent.gender}: ${Object.entries(roundCounts).map(([r, n]) => `${r}=${n}`).join(', ')}`)
+
     // Pre-compute per-round field stats so ratings are relative to each round's field
     const roundGroups = new Map<string, typeof scrapedEvent.results>()
     for (const r of scrapedEvent.results) {
