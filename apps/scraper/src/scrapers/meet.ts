@@ -105,7 +105,9 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
             if (!res.url().includes('GetResultsData3') || !res.ok()) return
             try {
               const json = await res.json() as Record<string, unknown>
+              const rawCount = ((json.resultsTF as unknown[][]) ?? []).flat().length
               const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
+              console.log(`    GetResultsData3: ${rawCount} rows → ${parsed?.results.length ?? 0} parsed`)
               if (parsed && parsed.results.length > 0) latestResult = parsed
             } catch { /* ignore */ }
           })
@@ -113,7 +115,10 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
           await sleep(1000)
-          try { await ep.click('text=Finals', { timeout: 3000 }) } catch { /* no Finals tab */ }
+          // Only click Finals if we don't already have results — avoids disrupting events that auto-load
+          if (!latestResult) {
+            try { await ep.click('text=Finals', { timeout: 3000 }) } catch { /* no Finals tab */ }
+          }
           await sleep(2500)
 
           const result = latestResult
