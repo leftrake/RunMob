@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "start": "playwright install chromium --with-deps && tsx src/index.ts",
+    "rerate": "tsx src/index.ts --rerate",
     "reset-db": "tsx src/index.ts --reset-db",
     "scrape:meet": "tsx src/scrapers/meet.ts",
     "scrape:search": "tsx src/scrapers/search.ts",

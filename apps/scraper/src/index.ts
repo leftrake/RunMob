@@ -3,6 +3,8 @@ import { searchRecentMeets } from './scrapers/search.js'
 import { scrapeMeet } from './scrapers/meet.js'
 import { ingestMeet, prisma } from './ingest.js'
 import { closeBrowser, sleep } from './browser.js'
+import { computeRating, computeMeetRating, getRatingLabel } from '@runmob/shared'
+import { safeParseTime } from './scrapers/athlete.js'
 
 // States to scrape — extend as needed
 const STATES = (process.env.SCRAPE_STATES ?? 'NC').split(',').map((s) => s.trim())
@@ -96,9 +98,93 @@ export async function runScrapeJob(): Promise<void> {
   await closeBrowser()
 }
 
+async function rerateAll(): Promise<void> {
+  console.log('Re-rating all results from stored data...')
+
+  const meets = await prisma.meet.findMany({
+    include: {
+      events: {
+        include: {
+          results: { include: { athlete: true } },
+        },
+      },
+    },
+  })
+
+  let totalResults = 0
+
+  for (const meet of meets) {
+    const athleteBestRatings = new Map<string, Map<string, number>>()
+
+    for (const event of meet.events) {
+      // Group by round and compute per-round winner time + spread
+      const roundGroups = new Map<string, typeof event.results>()
+      for (const r of event.results) {
+        const group = roundGroups.get(r.round) ?? []
+        group.push(r)
+        roundGroups.set(r.round, group)
+      }
+      const roundStats = new Map<string, { winnerTime: number; spread: number }>()
+      for (const [round, group] of roundGroups) {
+        const times = group.map((r) => r.time)
+        const winnerTime = Math.min(...times)
+        roundStats.set(round, { winnerTime, spread: Math.max(...times) - winnerTime })
+      }
+
+      for (const result of event.results) {
+        const prSeconds = safeParseTime(
+          (result.athlete.allTimePRs as Record<string, string>)[event.eventName] ?? '',
+        )
+        const stats = roundStats.get(result.round) ?? { winnerTime: result.time, spread: 0 }
+        const roundSize = roundGroups.get(result.round)?.length ?? 1
+
+        const rating = computeRating({
+          place: result.place,
+          fieldSize: roundSize,
+          gapToWinner: Math.max(0, result.time - stats.winnerTime),
+          fieldSpread: stats.spread,
+          prDelta: prSeconds !== null ? result.time - prSeconds : 0,
+          eventName: event.eventName,
+          gender: event.gender as 'M' | 'F',
+          round: result.round,
+        })
+
+        await prisma.athleteResult.update({
+          where: { id: result.id },
+          data: { rating, ratingLabel: getRatingLabel(rating) },
+        })
+        totalResults++
+
+        const eventKey = `${event.eventName} ${event.gender}`
+        const athleteMap = athleteBestRatings.get(result.athleteId) ?? new Map<string, number>()
+        if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
+        athleteBestRatings.set(result.athleteId, athleteMap)
+      }
+    }
+
+    // Recompute meet-level athlete ratings
+    for (const [athleteId, bestByEvent] of athleteBestRatings) {
+      const meetRating = computeMeetRating([...bestByEvent.values()])
+      await prisma.meetAthleteRating.upsert({
+        where: { athleteId_meetId: { athleteId, meetId: meet.id } },
+        create: { athleteId, meetId: meet.id, meetRating, eventCount: bestByEvent.size, eventRatings: Object.fromEntries(bestByEvent) },
+        update: { meetRating, eventCount: bestByEvent.size, eventRatings: Object.fromEntries(bestByEvent) },
+      })
+    }
+
+    console.log(`  ${meet.name}: ${meet.events.reduce((n, e) => n + e.results.length, 0)} results`)
+  }
+
+  console.log(`\nDone: ${meets.length} meets, ${totalResults} results re-rated`)
+}
+
 // Entry point
 
-if (args[0] === '--reset-db') {
+if (args[0] === '--rerate') {
+  rerateAll()
+    .catch(console.error)
+    .finally(() => prisma.$disconnect().then(() => process.exit(0)))
+} else if (args[0] === '--reset-db') {
   console.log('Resetting database...')
   // Delete in dependency order — children before parents
   await prisma.meetAthleteRating.deleteMany()
