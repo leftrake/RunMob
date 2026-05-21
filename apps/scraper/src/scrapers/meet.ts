@@ -11,6 +11,8 @@ export interface ScrapedResult {
   gender: 'M' | 'F'
   wind?: string
   round: string
+  /** Individual members of a relay leg — present when AthleticNET provides them */
+  relayMembers?: Array<{ name: string; athleticNetId: string | null }>
 }
 
 export interface ScrapedEvent {
@@ -215,6 +217,31 @@ function parseResultsData3Response(
         const roundId = String(r.Round ?? 'F')
         const round = roundById.get(roundId) ?? (roundId === 'F' ? 'Finals' : roundId === 'P' ? 'Prelims' : roundId)
 
+        const isRelay = (TRACK_EVENTS[eventId] ?? '').startsWith('4x')
+        let relayMembers: ScrapedResult['relayMembers']
+
+        if (isRelay) {
+          // Try every known field name AthleticNET uses for relay members
+          const memberRaw = (
+            r.RelayAthletes ?? r.Members ?? r.RelayMembers ?? r.Relay ??
+            r.relayAthletes ?? r.members ?? r.relayMembers
+          ) as Array<Record<string, unknown>> | null | undefined
+
+          if (Array.isArray(memberRaw) && memberRaw.length > 0) {
+            relayMembers = memberRaw.map((m) => {
+              const fn = String(m.FirstName ?? m.firstName ?? '').trim()
+              const ln = String(m.LastName  ?? m.lastName  ?? '').trim()
+              return {
+                name: [fn, ln].filter(Boolean).join(' ') || String(m.Name ?? m.name ?? '').trim(),
+                athleticNetId: String(m.AthleteID ?? m.athleteId ?? '').trim() || null,
+              }
+            }).filter((m) => m.name)
+          } else {
+            // Log once per relay event so we can find the right field name
+            console.log(`    [relay debug] keys in result row: ${Object.keys(r).join(', ')}`)
+          }
+        }
+
         results.push({
           place: parseInt(String(r.Place ?? '0')) || results.length + 1,
           athleteName,
@@ -225,6 +252,7 @@ function parseResultsData3Response(
           gender,
           wind: r.Wind != null ? String(r.Wind) : undefined,
           round,
+          ...(relayMembers ? { relayMembers } : {}),
         })
       }
     }

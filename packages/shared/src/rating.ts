@@ -71,9 +71,17 @@ export function computeRating(inputs: RatingInputs): number {
   return Math.round(clamp(raw * 10, 1, 10) * 10) / 10
 }
 
-// Meet-level athlete rating: simple average across all events entered
+// Meet-level athlete rating: best event as base + diminishing bonus per additional event.
+// Running a second or third event adds value — hard to max out but multi-event athletes
+// score meaningfully higher than single-event athletes at the same level.
 export function computeMeetRating(eventRatings: number[]): number {
   if (eventRatings.length === 0) return 0
-  const avg = eventRatings.reduce((sum, r) => sum + r, 0) / eventRatings.length
-  return Math.round(avg * 10) / 10
+  const sorted = [...eventRatings].sort((a, b) => b - a)
+  const primary = sorted[0]
+  const bonus = sorted.slice(1).reduce((sum, r) => sum + r * 0.15, 0)
+  return Math.min(10, Math.round((primary + bonus) * 10) / 10)
+}
+
+export function isRelayEvent(eventName: string): boolean {
+  return eventName.startsWith('4x')
 }

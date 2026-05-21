@@ -3,6 +3,8 @@ import { searchRecentMeets } from './scrapers/search.js'
 import { scrapeMeet } from './scrapers/meet.js'
 import { ingestMeet, prisma } from './ingest.js'
 import { closeBrowser, sleep } from './browser.js'
+import { computeRating, computeMeetRating, getRatingLabel, isRelayEvent } from '@runmob/shared'
+import { scrapeAthleteProfile, safeParseTime } from './scrapers/athlete.js'
 
 // States to scrape — extend as needed
 const STATES = (process.env.SCRAPE_STATES ?? 'NC').split(',').map((s) => s.trim())
@@ -96,9 +98,156 @@ export async function runScrapeJob(): Promise<void> {
   await closeBrowser()
 }
 
+async function rerateAll(): Promise<void> {
+  console.log('Re-rating all results from stored data...')
+
+  const meets = await prisma.meet.findMany({
+    include: {
+      events: {
+        include: {
+          results: { include: { athlete: true } },
+        },
+      },
+    },
+  })
+
+  let totalResults = 0
+
+  for (const meet of meets) {
+    const athleteBestRatings = new Map<string, Map<string, number>>()
+
+    for (const event of meet.events) {
+      // Group by round and compute per-round winner time + spread
+      const roundGroups = new Map<string, typeof event.results>()
+      for (const r of event.results) {
+        const group = roundGroups.get(r.round) ?? []
+        group.push(r)
+        roundGroups.set(r.round, group)
+      }
+      const roundStats = new Map<string, { winnerTime: number; spread: number }>()
+      for (const [round, group] of roundGroups) {
+        const times = group.map((r) => r.time)
+        const winnerTime = Math.min(...times)
+        roundStats.set(round, { winnerTime, spread: Math.max(...times) - winnerTime })
+      }
+
+      for (const result of event.results) {
+        const prSeconds = safeParseTime(
+          (result.athlete.allTimePRs as Record<string, string>)[event.eventName] ?? '',
+        )
+        const stats = roundStats.get(result.round) ?? { winnerTime: result.time, spread: 0 }
+        const roundSize = roundGroups.get(result.round)?.length ?? 1
+
+        const rating = computeRating({
+          place: result.place,
+          fieldSize: roundSize,
+          gapToWinner: Math.max(0, result.time - stats.winnerTime),
+          fieldSpread: stats.spread,
+          prDelta: prSeconds !== null ? result.time - prSeconds : 0,
+          eventName: event.eventName,
+          gender: event.gender as 'M' | 'F',
+          round: result.round,
+        })
+
+        await prisma.athleteResult.update({
+          where: { id: result.id },
+          data: { rating, ratingLabel: getRatingLabel(rating) },
+        })
+        totalResults++
+
+        if (!isRelayEvent(event.eventName)) {
+          const eventKey = `${event.eventName} ${event.gender}`
+          const athleteMap = athleteBestRatings.get(result.athleteId) ?? new Map<string, number>()
+          if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
+          athleteBestRatings.set(result.athleteId, athleteMap)
+        }
+      }
+    }
+
+    // Recompute meet-level athlete ratings
+    for (const [athleteId, bestByEvent] of athleteBestRatings) {
+      const meetRating = computeMeetRating([...bestByEvent.values()])
+      await prisma.meetAthleteRating.upsert({
+        where: { athleteId_meetId: { athleteId, meetId: meet.id } },
+        create: { athleteId, meetId: meet.id, meetRating, eventCount: bestByEvent.size, eventRatings: Object.fromEntries(bestByEvent) },
+        update: { meetRating, eventCount: bestByEvent.size, eventRatings: Object.fromEntries(bestByEvent) },
+      })
+    }
+
+    console.log(`  ${meet.name}: ${meet.events.reduce((n, e) => n + e.results.length, 0)} results`)
+  }
+
+  console.log(`\nDone: ${meets.length} meets, ${totalResults} results re-rated`)
+}
+
+async function scrapeAllAthletes(): Promise<void> {
+  // Only athletes whose ID is a numeric AthleticNET ID can be looked up
+  // Prisma doesn't support regex filters on IDs — filter in JS after fetch
+  const allAthletes = await prisma.athlete.findMany({ orderBy: { updatedAt: 'asc' } })
+  const athletes = allAthletes.filter((a) => /^\d+$/.test(a.id))
+
+  console.log(`Scraping profiles for ${athletes.length} athletes...`)
+  let updated = 0
+  let failed = 0
+
+  for (let i = 0; i < athletes.length; i++) {
+    const athlete = athletes[i]
+    process.stdout.write(`  [${i + 1}/${athletes.length}] ${athlete.name}... `)
+
+    try {
+      const profile = await scrapeAthleteProfile(athlete.id)
+      if (!profile) {
+        process.stdout.write('no data\n')
+        failed++
+      } else {
+        // Merge: only overwrite with AthleticNET data if it's better (lower time)
+        const existing = athlete.allTimePRs as Record<string, string>
+        const merged: Record<string, string> = { ...existing }
+        for (const [event, time] of Object.entries(profile.allTimePRs)) {
+          const existingSeconds = safeParseTime(existing[event] ?? '')
+          const newSeconds = safeParseTime(time)
+          if (newSeconds !== null && (existingSeconds === null || newSeconds < existingSeconds)) {
+            merged[event] = time
+          }
+        }
+
+        await prisma.athlete.update({
+          where: { id: athlete.id },
+          data: {
+            allTimePRs: merged,
+            seasonBests: profile.seasonBests,
+            school: profile.school || athlete.school,
+            state: profile.state || athlete.state,
+            gradYear: profile.gradYear || athlete.gradYear,
+          },
+        })
+        process.stdout.write(`done (${Object.keys(profile.allTimePRs).length} PRs)\n`)
+        updated++
+      }
+    } catch (err) {
+      process.stdout.write(`error: ${err}\n`)
+      failed++
+    }
+
+    // Polite delay between profiles
+    await sleep(1000)
+  }
+
+  console.log(`\nDone: ${updated} updated, ${failed} failed`)
+  console.log('Run --rerate to apply updated PRs to all ratings.')
+}
+
 // Entry point
 
-if (args[0] === '--reset-db') {
+if (args[0] === '--scrape-athletes') {
+  scrapeAllAthletes()
+    .catch(console.error)
+    .finally(() => prisma.$disconnect().then(() => closeBrowser()).then(() => process.exit(0)))
+} else if (args[0] === '--rerate') {
+  rerateAll()
+    .catch(console.error)
+    .finally(() => prisma.$disconnect().then(() => process.exit(0)))
+} else if (args[0] === '--reset-db') {
   console.log('Resetting database...')
   // Delete in dependency order — children before parents
   await prisma.meetAthleteRating.deleteMany()
