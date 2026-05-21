@@ -97,47 +97,26 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
         const { page: ep } = await newPage()
         try {
-          const resultPromise = new Promise<ScrapedEvent | null>((resolve) => {
-            const t = setTimeout(() => resolve(null), 20_000)
-            ep.on('response', async (res) => {
-              if (!res.url().includes('GetResultsData3')) return
-              if (!res.ok()) {
-                // 429 = rate limited, give up on this event
-                if (res.status() === 429) {
-                  clearTimeout(t)
-                  console.log(`    GetResultsData3 429 for ${eventUrl}`)
-                  resolve(null)
-                }
-                return
-              }
-              try {
-                const json = await res.json() as Record<string, unknown>
-                const rawList = ((json.resultsTF as unknown[][]) ?? []).flat()
-                if (rawList.length > 0) {
-                  const sample = rawList[0] as Record<string, unknown>
-                  console.log(`    GetResultsData3 ${rawList.length} rows, sample Result="${sample.Result}" Place="${sample.Place}"`)
-                }
-                const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
-                if (parsed && parsed.results.length > 0) {
-                  clearTimeout(t)
-                  resolve(parsed)
-                }
-                // empty resultsTF = first/metadata call — keep listening for the results call
-              } catch {
-                // parse error — keep listening
-              }
-            })
+          // Use a variable rather than resolving immediately — always click Finals so we get
+          // finals results even when prelims auto-load first on page navigation.
+          let latestResult: ScrapedEvent | null = null
+
+          ep.on('response', async (res) => {
+            if (!res.url().includes('GetResultsData3') || !res.ok()) return
+            try {
+              const json = await res.json() as Record<string, unknown>
+              const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
+              if (parsed && parsed.results.length > 0) latestResult = parsed
+            } catch { /* ignore */ }
           })
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          await sleep(1500)
-          // For events with sub-selectors (hurdle heights, rounds), click the first active/available option
-          // so the SPA fires the second GetResultsData3 call with actual results.
-          for (const selector of ['text=Finals', 'li.active a', '.event-type-list li:first-child a', 'ul.nav li:first-child a']) {
-            try { await ep.click(selector, { timeout: 1500 }) } catch { /* not found */ }
-          }
-          const result = await resultPromise
+          await sleep(1000)
+          try { await ep.click('text=Finals', { timeout: 3000 }) } catch { /* no Finals tab */ }
+          await sleep(2500)
+
+          const result = latestResult
           if (result && result.results.length > 0) {
             allEvents.push(result)
             console.log(`    ${result.eventName} ${gender}: ${result.results.length} results`)
