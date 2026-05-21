@@ -69,9 +69,9 @@ export async function runScrapeJob(): Promise<void> {
         // Merge stub metadata with scraped events — stub is authoritative for fields the scraper doesn't extract
         const enriched = {
           ...scraped,
-          name: scraped.name || stub.name,
-          date: scraped.date || stub.date,
-          location: scraped.location || stub.location,
+          name: stub.name || scraped.name,
+          date: stub.date || scraped.date,
+          location: stub.location || scraped.location,
           level: stub.level,
           division: stub.division,
           state: stub.state,
