@@ -76,6 +76,11 @@ export async function ingestMeet(
         where: { name: r.athleteName, school: r.school },
       })
 
+      // Fallback: same athlete may appear with slightly different name/school across meets
+      if (!athlete && r.athleticNetAthleteId) {
+        athlete = await prisma.athlete.findUnique({ where: { id: r.athleticNetAthleteId } })
+      }
+
       if (!athlete) {
         let profile = null
         if (opts.scrapeAthletes && r.athleticNetAthleteId) {
