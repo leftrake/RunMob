@@ -51,6 +51,7 @@ const TRACK_EVENTS: Record<number, string> = {
 }
 
 interface EventListItem { e: number; d: number }
+interface ScrapeTarget { eventId: number; division: number; gender: 'm' | 'f' }
 
 export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): Promise<ScrapedMeet | null> {
   const { page } = await newPage()
@@ -59,101 +60,91 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     const baseUrl = rsUrl ?? `https://www.athletic.net/TrackAndField/meet/${athleticNetId}/results`
     console.log(`  Navigating to ${baseUrl}`)
 
-    // Set up listener BEFORE goto — GetEventListData fires during page load
-    const eventListPromise = new Promise<EventListItem[]>((resolve) => {
-      const t = setTimeout(() => resolve([]), 15_000)
+    // Accumulate ALL GetEventListData items — the response can fire more than once.
+    // Set up listener BEFORE goto so we don't miss early responses.
+    const allEventListItems: EventListItem[] = []
+    const eventListDone = new Promise<void>((resolve) => {
+      const deadline = setTimeout(resolve, 15_000)
       page.on('response', async (res) => {
         if (!res.url().includes('GetEventListData')) return
-        clearTimeout(t)
+        clearTimeout(deadline)
         try {
           const json = await res.json() as { eventDivsWithResults?: EventListItem[] }
-          resolve(json.eventDivsWithResults ?? [])
-        } catch { resolve([]) }
+          allEventListItems.push(...(json.eventDivsWithResults ?? []))
+        } catch { /* ignore */ }
+        // Short grace window for any follow-up GetEventListData calls before settling
+        setTimeout(resolve, 1_500)
       })
     })
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    const eventList = await eventListPromise
-    await sleep(500)
+    await eventListDone
+    await sleep(300)
 
-    // Always try every event in TRACK_EVENTS — use division from event list when known, else d=1.
-    // Relying solely on GetEventListData caused events like 1600m to be skipped when the meet
-    // used an unexpected event ID or the list response was incomplete.
-    const divisionById = new Map(eventList.map((item) => [item.e, item.d]))
-    const trackEvents = Object.keys(TRACK_EVENTS).map(Number).map((id) => ({
-      e: id,
-      d: divisionById.get(id) ?? 1,
-    }))
+    // Build confirmed map: eventId → Set<division>
+    const confirmedDivs = new Map<number, Set<number>>()
+    for (const { e, d } of allEventListItems) {
+      if (!confirmedDivs.has(e)) confirmedDivs.set(e, new Set())
+      confirmedDivs.get(e)!.add(d)
+    }
 
-    console.log(`  Track events to scrape: ${trackEvents.map((t) => `${TRACK_EVENTS[t.e]}(d${t.d})`).join(', ')}`)
+    const hasEventList = allEventListItems.length > 0
+
+    // Build scrape targets.
+    // When event list is available: only visit confirmed events with their exact divisions.
+    // When event list is unavailable (network/CF issue): fall back to trying all events at d=1.
+    const targets: ScrapeTarget[] = []
+    for (const id of Object.keys(TRACK_EVENTS).map(Number)) {
+      if (hasEventList) {
+        const divs = confirmedDivs.get(id)
+        if (!divs) continue  // event genuinely not in this meet
+        for (const d of divs) {
+          targets.push({ eventId: id, division: d, gender: 'm' })
+          targets.push({ eventId: id, division: d, gender: 'f' })
+        }
+      } else {
+        targets.push({ eventId: id, division: 1, gender: 'm' })
+        targets.push({ eventId: id, division: 1, gender: 'f' })
+      }
+    }
+
+    if (hasEventList) {
+      const summary = [...confirmedDivs.entries()]
+        .filter(([id]) => TRACK_EVENTS[id])
+        .map(([id, divs]) => `${TRACK_EVENTS[id]}(d${[...divs].join(',')})`)
+        .join(', ')
+      console.log(`  Confirmed events: ${summary}`)
+    } else {
+      console.log(`  Event list unavailable — trying all ${Object.keys(TRACK_EVENTS).length} events at d=1`)
+    }
 
     const allEvents: ScrapedEvent[] = []
+    const noDataTargets: ScrapeTarget[] = []
 
-    // Use a fresh page per event — repeated page.goto() within the same page triggers
-    // SPA client-side routing which skips the GetResultsData3 network call.
-    // Fresh pages share CF clearance cookies via the shared browser context.
-    for (const { e: eventId, d: division } of trackEvents) {
-      for (const gender of ['m', 'f'] as const) {
-        // Girls run 100mH, boys run 110mH — different slug for female event 9
-        const eventSlug = (eventId === 9 && gender === 'f')
-          ? '100mh'
-          : (TRACK_EVENTS[eventId] ?? '').toLowerCase()
-        const eventUrl = `${baseUrl}/${gender}/${division}/${eventSlug}`
+    // First pass — normal timeouts
+    for (const target of targets) {
+      const result = await scrapeEventPage(baseUrl, target)
+      if (result) {
+        allEvents.push(result)
+        console.log(`    ${result.eventName} ${target.gender.toUpperCase()}: ${result.results.length} results`)
+      } else if (hasEventList) {
+        // We expected data (event was confirmed) but got none — queue for retry
+        noDataTargets.push(target)
+      }
+      await sleep(400)
+    }
 
-        const { page: ep } = await newPage()
-        try {
-          // Accumulate results from ALL GetResultsData3 responses (prelims + finals are separate calls)
-          const allRoundResults: ScrapedResult[] = []
-          let eventMeta: { eventName: string; gender: 'M' | 'F' } | null = null
-          let noResults = false
-          let lastResponseAt = 0
-          let responseCount = 0
-
-          ep.on('response', async (res) => {
-            if (!res.url().includes('GetResultsData3') || !res.ok()) return
-            try {
-              const json = await res.json() as Record<string, unknown>
-              if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
-              lastResponseAt = Date.now()
-              responseCount++
-              const outerArr = (json.resultsTF as unknown[][]) ?? []
-              console.log(`    GetResultsData3 #${responseCount}: ${outerArr.flat().length} rows`)
-              const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
-              if (parsed && parsed.results.length > 0) {
-                if (!eventMeta) eventMeta = { eventName: parsed.eventName, gender: parsed.gender }
-                const existingKeys = new Set(allRoundResults.map((r) => `${r.athleteName}-${r.round}`))
-                for (const r of parsed.results) {
-                  if (!existingKeys.has(`${r.athleteName}-${r.round}`)) allRoundResults.push(r)
-                }
-              }
-            } catch { /* ignore */ }
-          })
-
-          console.log(`    -> ${eventUrl}`)
-          await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          // Wait up to 12s total; exit 2s after last results response.
-          // AthleticNET often fires currentEventValid:false first, then the real data shortly after.
-          // Wait at least 5s after a noResults signal before giving up, so the real response
-          // has time to arrive.
-          const startedAt = Date.now()
-          while (Date.now() - startedAt < 12_000) {
-            await sleep(200)
-            if (noResults && responseCount === 0 && Date.now() - startedAt > 5_000) break
-            if (responseCount > 0 && Date.now() - lastResponseAt > 2_000) break
-          }
-
-          // eventMeta may be set by async handler — cast to avoid TS control-flow narrowing to null
-          const meta = eventMeta as { eventName: string; gender: 'M' | 'F' } | null
-          if (meta && allRoundResults.length > 0) {
-            allEvents.push({ eventName: meta.eventName, gender: meta.gender, results: allRoundResults })
-            console.log(`    ${meta.eventName} ${gender}: ${allRoundResults.length} results`)
-          }
-        } catch (err) {
-          console.log(`    Error for ${eventUrl}: ${err}`)
-        } finally {
-          await ep.close()
+    // Retry pass — longer waits for events that came up empty on first attempt
+    if (noDataTargets.length > 0) {
+      console.log(`  Retrying ${noDataTargets.length} confirmed events with no data...`)
+      for (const target of noDataTargets) {
+        const result = await scrapeEventPage(baseUrl, target, { maxWaitMs: 20_000, noResultsMinWaitMs: 10_000 })
+        if (result) {
+          allEvents.push(result)
+          console.log(`    [retry ok] ${result.eventName} ${target.gender.toUpperCase()}: ${result.results.length} results`)
+        } else {
+          console.log(`    [retry fail] ${TRACK_EVENTS[target.eventId]} ${target.gender.toUpperCase()}`)
         }
-
         await sleep(500)
       }
     }
@@ -172,6 +163,74 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     }
   } catch (err) {
     console.error(`  Error scraping meet ${athleticNetId}:`, err)
+    return null
+  } finally {
+    await page.close()
+  }
+}
+
+// Scrape a single event page, collecting all GetResultsData3 responses (prelims + finals).
+// Returns null if no results were found within the timeout window.
+async function scrapeEventPage(
+  baseUrl: string,
+  target: ScrapeTarget,
+  opts: { maxWaitMs?: number; noResultsMinWaitMs?: number } = {},
+): Promise<ScrapedEvent | null> {
+  const { eventId, division, gender } = target
+  const { maxWaitMs = 12_000, noResultsMinWaitMs = 6_000 } = opts
+  const genderEnum = gender === 'm' ? 'M' : 'F'
+  const eventSlug = (eventId === 9 && gender === 'f') ? '100mh' : (TRACK_EVENTS[eventId] ?? '').toLowerCase()
+  const eventUrl = `${baseUrl}/${gender}/${division}/${eventSlug}`
+
+  // Fresh page per event — reusing a page triggers SPA routing which skips the API call.
+  const { page } = await newPage()
+  try {
+    const allRoundResults: ScrapedResult[] = []
+    let eventMeta: { eventName: string; gender: 'M' | 'F' } | null = null
+    let noResults = false
+    let lastResponseAt = 0
+    let responseCount = 0
+
+    page.on('response', async (res) => {
+      if (!res.url().includes('GetResultsData3') || !res.ok()) return
+      try {
+        const json = await res.json() as Record<string, unknown>
+        if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
+        lastResponseAt = Date.now()
+        responseCount++
+        const outerArr = (json.resultsTF as unknown[][]) ?? []
+        console.log(`    GetResultsData3 #${responseCount}: ${outerArr.flat().length} rows`)
+        const parsed = parseResultsData3Response(json, genderEnum, eventId)
+        if (parsed && parsed.results.length > 0) {
+          if (!eventMeta) eventMeta = { eventName: parsed.eventName, gender: parsed.gender }
+          const existingKeys = new Set(allRoundResults.map((r) => `${r.athleteName}-${r.round}`))
+          for (const r of parsed.results) {
+            if (!existingKeys.has(`${r.athleteName}-${r.round}`)) allRoundResults.push(r)
+          }
+        }
+      } catch { /* ignore */ }
+    })
+
+    console.log(`    -> ${eventUrl}`)
+    await page.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+
+    // Wait loop: exit early once data settles (2s since last response) or noResults confirmed.
+    // AthleticNET sometimes fires currentEventValid:false before sending the real payload,
+    // so we always wait at least noResultsMinWaitMs before treating a noResults signal as final.
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < maxWaitMs) {
+      await sleep(200)
+      if (noResults && responseCount === 0 && Date.now() - startedAt > noResultsMinWaitMs) break
+      if (responseCount > 0 && Date.now() - lastResponseAt > 2_000) break
+    }
+
+    const meta = eventMeta as typeof eventMeta
+    if (meta && allRoundResults.length > 0) {
+      return { eventName: meta.eventName, gender: meta.gender, results: allRoundResults }
+    }
+    return null
+  } catch (err) {
+    console.log(`    Error for ${eventUrl}: ${err}`)
     return null
   } finally {
     await page.close()
