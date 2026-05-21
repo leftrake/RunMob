@@ -124,7 +124,8 @@ export async function ingestMeet(
         round: r.round,
       })
 
-      const prAtMeet = prSeconds !== null && r.timeSeconds <= prSeconds
+      // PR: true for first result in this event ever, or faster than stored all-time PR
+      const prAtMeet = prSeconds === null || r.timeSeconds <= prSeconds
       const seasonBestAtMeet = sbSeconds === null || r.timeSeconds <= sbSeconds
 
       if (sbSeconds === null || r.timeSeconds < sbSeconds) {
@@ -136,6 +137,27 @@ export async function ingestMeet(
               [scrapedEvent.eventName]: r.displayTime,
             },
           },
+        })
+      }
+
+      // Persist all-time PR so future meets have a baseline
+      if (prSeconds === null || r.timeSeconds < prSeconds) {
+        await prisma.athlete.update({
+          where: { id: athlete.id },
+          data: {
+            allTimePRs: {
+              ...(athlete.allTimePRs as Record<string, string>),
+              [scrapedEvent.eventName]: r.displayTime,
+            },
+          },
+        })
+      }
+
+      // Add event to athlete's event list if not already there
+      if (!(athlete.events as string[]).includes(scrapedEvent.eventName)) {
+        await prisma.athlete.update({
+          where: { id: athlete.id },
+          data: { events: { push: scrapedEvent.eventName } },
         })
       }
 
