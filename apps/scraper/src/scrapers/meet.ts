@@ -99,6 +99,9 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
               resolve(null)
             }, 20_000)
             ep.on('response', async (res) => {
+              if (res.url().includes('/api/v1/')) {
+                console.log(`    API ${res.status()} ${res.url().replace('https://www.athletic.net', '')}`)
+              }
               if (!res.url().includes('GetResultsData3')) return
               if (!res.ok()) {
                 // 429 = rate limited, give up on this event
