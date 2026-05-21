@@ -99,8 +99,11 @@ export async function runScrapeJob(): Promise<void> {
 // Entry point
 
 if (args[0] === '--reset-db') {
-  // Wipe all scraped data — meets cascade to events, results, and meet ratings
   console.log('Resetting database...')
+  // Delete in dependency order — children before parents
+  await prisma.meetAthleteRating.deleteMany()
+  await prisma.athleteResult.deleteMany()
+  await prisma.meetEvent.deleteMany()
   await prisma.meet.deleteMany()
   await prisma.athlete.deleteMany()
   console.log('Done.')
