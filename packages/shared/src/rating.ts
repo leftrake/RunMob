@@ -26,9 +26,49 @@ const WEIGHT_PLACE = 0.40
 const WEIGHT_GAP   = 0.35
 const WEIGHT_PR    = 0.25
 
-// Sigmoid: centered at 0s delta, scale of 5s means ±5s moves the curve meaningfully
 const PR_CENTER = 0
-const PR_SCALE  = 5
+
+// How many seconds = one meaningful sigma for PR comparison, per event.
+// Sprints are sensitive to tenths; distance events need seconds of movement.
+const PR_SCALE_BY_EVENT: Record<string, number> = {
+  '100m':    0.5,
+  '200m':    0.8,
+  '400m':    1.5,
+  '800m':    3.0,
+  '1500m':   5.0,
+  '1600m':   5.0,
+  'Mile':    6.0,
+  '3200m':   8.0,
+  '5000m':  12.0,
+  '10000m': 20.0,
+  '110mH':   0.6,
+  '100mH':   0.6,
+  '300mH':   1.5,
+  '4x100m':  1.0,
+  '4x400m':  3.0,
+  '4x800m':  8.0,
+}
+
+// Minimum field spread used as denominator for gap score, per event.
+// Prevents a tight elite field from inflating gap penalties for tiny time differences.
+const MIN_SPREAD_BY_EVENT: Record<string, number> = {
+  '100m':    0.5,
+  '200m':    1.0,
+  '400m':    2.0,
+  '800m':    5.0,
+  '1500m':  10.0,
+  '1600m':  10.0,
+  'Mile':   12.0,
+  '3200m':  20.0,
+  '5000m':  30.0,
+  '10000m': 60.0,
+  '110mH':   1.0,
+  '100mH':   1.0,
+  '300mH':   2.0,
+  '4x100m':  1.0,
+  '4x400m':  4.0,
+  '4x800m': 10.0,
+}
 
 function sigmoid(x: number, center: number, scale: number): number {
   return 1 / (1 + Math.exp(-(x - center) / scale))
@@ -53,17 +93,20 @@ export interface RatingInputs {
 }
 
 export function computeRating(inputs: RatingInputs): number {
-  const { place, fieldSize, gapToWinner, fieldSpread, prDelta } = inputs
+  const { place, fieldSize, gapToWinner, fieldSpread, prDelta, eventName } = inputs
 
   // 1. Place score: percentile within field (0–1)
   const placeScore = fieldSize > 1 ? (fieldSize - place) / (fieldSize - 1) : 1
 
   // 2. Gap score: closeness to winner relative to field spread (0–1)
-  const gapScore = 1 - clamp(gapToWinner / Math.max(fieldSpread, 1), 0, 1)
+  //    Use event-specific minimum spread so a tight elite field doesn't warp the scale
+  const minSpread = MIN_SPREAD_BY_EVENT[eventName] ?? 5.0
+  const gapScore = 1 - clamp(gapToWinner / Math.max(fieldSpread, minSpread), 0, 1)
 
   // 3. PR score: sigmoid — negative delta (beat PR) pushes above 0.5, positive below
-  //    When prDelta=0 (no PR data or exact PR match), score is neutral 0.5
-  const prScore = sigmoid(-prDelta, PR_CENTER, PR_SCALE)
+  //    Scale is event-specific: 0.5s matters a lot in the 100m, barely registers in the 3200m
+  const prScale = PR_SCALE_BY_EVENT[eventName] ?? 5.0
+  const prScore = sigmoid(-prDelta, PR_CENTER, prScale)
 
   const raw = placeScore * WEIGHT_PLACE + gapScore * WEIGHT_GAP + prScore * WEIGHT_PR
 
