@@ -102,16 +102,25 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
           const allRoundResults: ScrapedResult[] = []
           let eventMeta: { eventName: string; gender: 'M' | 'F' } | null = null
           let noResults = false
+          let lastResponseAt = 0
+          let responseCount = 0
 
           ep.on('response', async (res) => {
             if (!res.url().includes('GetResultsData3') || !res.ok()) return
             try {
+              const reqBody = res.request().postData()
               const json = await res.json() as Record<string, unknown>
               if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
+              lastResponseAt = Date.now()
+              responseCount++
               const outerArr = (json.resultsTF as unknown[][]) ?? []
               const rowCount = outerArr.flat().length
               const sample = outerArr[0]?.[0] as Record<string, unknown> | undefined
-              console.log(`    GetResultsData3: ${rowCount} rows, outerLen=${outerArr.length}, sample=${JSON.stringify(sample).slice(0, 300)}`)
+              const roundKeys = Object.fromEntries(Object.entries(json).filter(([k]) => /round/i.test(k)))
+              console.log(`    GetResultsData3 #${responseCount}: ${rowCount} rows, outerLen=${outerArr.length}`)
+              console.log(`    req=${reqBody?.slice(0, 200)}`)
+              console.log(`    roundKeys=${JSON.stringify(roundKeys)}`)
+              console.log(`    sample=${JSON.stringify(sample).slice(0, 300)}`)
               const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
               if (parsed && parsed.results.length > 0) {
                 if (!eventMeta) eventMeta = { eventName: parsed.eventName, gender: parsed.gender }
@@ -125,9 +134,12 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          // Both prelims and finals load automatically — wait for all GetResultsData3 calls to complete
-          const deadline = Date.now() + 5000
-          while (!noResults && Date.now() < deadline) await sleep(200)
+          // Wait up to 10s total, but exit 2s after the last response arrives
+          const startedAt = Date.now()
+          while (!noResults && Date.now() - startedAt < 10_000) {
+            await sleep(200)
+            if (responseCount > 0 && Date.now() - lastResponseAt > 2_000) break
+          }
 
           const result = eventMeta && allRoundResults.length > 0
             ? { eventName: eventMeta.eventName, gender: eventMeta.gender, results: allRoundResults }
