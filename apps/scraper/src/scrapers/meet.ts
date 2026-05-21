@@ -11,8 +11,6 @@ export interface ScrapedResult {
   gender: 'M' | 'F'
   wind?: string
   round: string
-  /** Individual members of a relay leg — present when AthleticNET provides them */
-  relayMembers?: Array<{ name: string; athleticNetId: string | null }>
 }
 
 export interface ScrapedEvent {
@@ -194,74 +192,97 @@ function parseResultsData3Response(
       ((json.rounds as Array<{ IDRound: string; RoundDesc: string }>) ?? []).map((r) => [r.IDRound, r.RoundDesc])
     )
 
+    let eventName = TRACK_EVENTS[eventId]
+    if (!eventName) return null
+    if (eventId === 9 && gender === 'F') eventName = '100mH'
+
+    const isRelay = eventName.startsWith('4x')
     const results: ScrapedResult[] = []
 
-    for (const roundArr of outerList) {
-      for (const raw of roundArr) {
+    if (isRelay) {
+      // AthleticNET relay rows are flat: team-level rows (no LastName) set the place/time context;
+      // individual member rows (have LastName + Grade) inherit that context.
+      let team: { place: number; timeSeconds: number; displayTime: string; school: string; round: string } | null = null
+
+      for (const raw of outerList.flat()) {
         const r = raw as Record<string, unknown>
         const displayTime = String(r.Result ?? '').trim()
-        if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
-        if (/m$/.test(displayTime) || /-\d{2}/.test(displayTime)) continue
+        const hasMemberFields = 'LastName' in r
 
-        let timeSeconds: number
-        try {
-          timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
-          if (isNaN(timeSeconds) || timeSeconds <= 0) continue
-        } catch { continue }
-
-        const firstName = String(r.FirstName ?? '').trim()
-        const lastName  = String(r.LastName  ?? '').trim()
-        const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
-        if (!athleteName) continue
-
-        const roundId = String(r.Round ?? 'F')
-        const round = roundById.get(roundId) ?? (roundId === 'F' ? 'Finals' : roundId === 'P' ? 'Prelims' : roundId)
-
-        const isRelay = (TRACK_EVENTS[eventId] ?? '').startsWith('4x')
-        let relayMembers: ScrapedResult['relayMembers']
-
-        if (isRelay) {
-          // Try every known field name AthleticNET uses for relay members
-          const memberRaw = (
-            r.RelayAthletes ?? r.Members ?? r.RelayMembers ?? r.Relay ??
-            r.relayAthletes ?? r.members ?? r.relayMembers
-          ) as Array<Record<string, unknown>> | null | undefined
-
-          if (Array.isArray(memberRaw) && memberRaw.length > 0) {
-            relayMembers = memberRaw.map((m) => {
-              const fn = String(m.FirstName ?? m.firstName ?? '').trim()
-              const ln = String(m.LastName  ?? m.lastName  ?? '').trim()
-              return {
-                name: [fn, ln].filter(Boolean).join(' ') || String(m.Name ?? m.name ?? '').trim(),
-                athleticNetId: String(m.AthleteID ?? m.athleteId ?? '').trim() || null,
-              }
-            }).filter((m) => m.name)
-          } else {
-            // Log once per relay event so we can find the right field name
-            console.log(`    [relay debug] keys in result row: ${Object.keys(r).join(', ')}`)
+        if (!hasMemberFields) {
+          // Team-level row — capture context for following member rows
+          if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) { team = null; continue }
+          let timeSeconds: number
+          try {
+            timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
+            if (isNaN(timeSeconds) || timeSeconds <= 0) { team = null; continue }
+          } catch { team = null; continue }
+          const roundId = String(r.Round ?? 'F')
+          const round = roundById.get(roundId) ?? (roundId === 'F' ? 'Finals' : roundId === 'P' ? 'Prelims' : roundId)
+          team = {
+            place: parseInt(String(r.Place ?? '0')) || 0,
+            timeSeconds,
+            displayTime,
+            school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
+            round,
           }
+        } else {
+          // Individual member row — inherit team context
+          if (!team) continue
+          const firstName = String(r.FirstName ?? '').trim()
+          const lastName  = String(r.LastName  ?? '').trim()
+          const athleteName = [firstName, lastName].filter(Boolean).join(' ')
+          if (!athleteName) continue
+          results.push({
+            place: team.place,
+            athleteName,
+            athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
+            school: team.school,
+            displayTime: team.displayTime,
+            timeSeconds: team.timeSeconds,
+            gender,
+            round: team.round,
+          })
         }
+      }
+    } else {
+      for (const roundArr of outerList) {
+        for (const raw of roundArr) {
+          const r = raw as Record<string, unknown>
+          const displayTime = String(r.Result ?? '').trim()
+          if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
+          if (/m$/.test(displayTime) || /-\d{2}/.test(displayTime)) continue
 
-        results.push({
-          place: parseInt(String(r.Place ?? '0')) || results.length + 1,
-          athleteName,
-          athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
-          school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
-          displayTime,
-          timeSeconds,
-          gender,
-          wind: r.Wind != null ? String(r.Wind) : undefined,
-          round,
-          ...(relayMembers ? { relayMembers } : {}),
-        })
+          let timeSeconds: number
+          try {
+            timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
+            if (isNaN(timeSeconds) || timeSeconds <= 0) continue
+          } catch { continue }
+
+          const firstName = String(r.FirstName ?? '').trim()
+          const lastName  = String(r.LastName  ?? '').trim()
+          const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
+          if (!athleteName) continue
+
+          const roundId = String(r.Round ?? 'F')
+          const round = roundById.get(roundId) ?? (roundId === 'F' ? 'Finals' : roundId === 'P' ? 'Prelims' : roundId)
+
+          results.push({
+            place: parseInt(String(r.Place ?? '0')) || results.length + 1,
+            athleteName,
+            athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
+            school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
+            displayTime,
+            timeSeconds,
+            gender,
+            wind: r.Wind != null ? String(r.Wind) : undefined,
+            round,
+          })
+        }
       }
     }
 
     if (results.length === 0) return null
-
-    let eventName = TRACK_EVENTS[eventId]
-    if (!eventName) return null
-    if (eventId === 9 && gender === 'F') eventName = '100mH'
 
     return { eventName, gender, results }
   } catch {
