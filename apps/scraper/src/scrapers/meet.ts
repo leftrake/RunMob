@@ -95,10 +95,7 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
         const { page: ep } = await newPage()
         try {
           const resultPromise = new Promise<ScrapedEvent | null>((resolve) => {
-            const t = setTimeout(() => {
-              console.log(`    Timeout waiting for GetResultsData3: ${eventUrl}`)
-              resolve(null)
-            }, 20_000)
+            const t = setTimeout(() => resolve(null), 20_000)
             ep.on('response', async (res) => {
               if (!res.url().includes('GetResultsData3')) return
               if (!res.ok()) {
