@@ -1,13 +1,12 @@
 import type { RatingLabel, RatingTier } from './types.js'
 
 export const RATING_TIERS: RatingTier[] = [
-  { min: 9.5, label: 'Legendary',     color: '#22c55e' },
-  { min: 8.5, label: 'Outstanding',   color: '#16a34a' },
-  { min: 7.5, label: 'Great',         color: '#65a30d' },
-  { min: 6.5, label: 'Good',          color: '#ca8a04' },
-  { min: 5.5, label: 'Average',       color: '#d97706' },
-  { min: 4.5, label: 'Below Average', color: '#ea580c' },
-  { min: 0,   label: 'Poor',          color: '#dc2626' },
+  { min: 9.0, label: 'Elite',     color: '#f59e0b' }, // amber
+  { min: 8.0, label: 'Great',     color: '#22c55e' }, // green
+  { min: 7.0, label: 'Good',      color: '#60a5fa' }, // blue
+  { min: 5.5, label: 'Average',   color: '#a78bfa' }, // purple
+  { min: 4.0, label: 'Below avg', color: '#9ca3af' }, // gray
+  { min: 0,   label: 'Poor',      color: '#9ca3af' }, // gray
 ]
 
 export function getRatingTier(rating: number): RatingTier {
@@ -22,47 +21,59 @@ export function getRatingColor(rating: number): string {
   return getRatingTier(rating).color
 }
 
+// Weights must sum to 1.0
+const WEIGHT_PLACE = 0.40
+const WEIGHT_GAP   = 0.35
+const WEIGHT_PR    = 0.25
+
+// Sigmoid: centered at 0s delta, scale of 5s means ±5s moves the curve meaningfully
+const PR_CENTER = 0
+const PR_SCALE  = 5
+
+function sigmoid(x: number, center: number, scale: number): number {
+  return 1 / (1 + Math.exp(-(x - center) / scale))
+}
+
+function clamp(val: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, val))
+}
+
 export interface RatingInputs {
   place: number
   fieldSize: number
-  timeSeconds: number
+  /** Seconds behind the winner (0 if first place) */
+  gapToWinner: number
+  /** Spread in seconds from winner to last place */
+  fieldSpread: number
+  /** timeSeconds − personalBest. Negative = beat PR. Pass 0 if no PR on file. */
+  prDelta: number
   eventName: string
   gender: 'M' | 'F'
-  personalBestSeconds: number | null
   round: string
 }
 
 export function computeRating(inputs: RatingInputs): number {
-  const { place, fieldSize, timeSeconds, personalBestSeconds, round } = inputs
+  const { place, fieldSize, gapToWinner, fieldSpread, prDelta } = inputs
 
-  // 1. Field score: rank percentile + log-weighted field size (0–10)
-  //    Winning a 2-person heat scores lower than winning a 30-person final.
-  const rankPct = fieldSize > 1 ? (fieldSize - place) / (fieldSize - 1) : 0.5
-  const sizeWeight = Math.log(Math.min(fieldSize, 50)) / Math.log(50)
-  const fieldScore = (0.7 * rankPct + 0.3 * sizeWeight) * 10
+  // 1. Place score: percentile within field (0–1)
+  const placeScore = fieldSize > 1 ? (fieldSize - place) / (fieldSize - 1) : 1
 
-  // 2. Personal-time score: how much faster/slower than personal best (0–10)
-  //    No PR on file → neutral 5.0.
-  //    Beat PR by ≥5% → 10; 5% slower than PR → 0; linear in between.
-  let prScore = 5.0
-  if (personalBestSeconds !== null && personalBestSeconds > 0) {
-    const delta = (personalBestSeconds - timeSeconds) / personalBestSeconds
-    prScore = Math.max(0, Math.min(10, 5 + delta * 100))
-  }
+  // 2. Gap score: closeness to winner relative to field spread (0–1)
+  const gapScore = 1 - clamp(gapToWinner / Math.max(fieldSpread, 1), 0, 1)
 
-  // Finals get a small boost — highest-stakes round
-  const roundBonus = round === 'Finals' ? 0.3 : 0
+  // 3. PR score: sigmoid — negative delta (beat PR) pushes above 0.5, positive below
+  //    When prDelta=0 (no PR data or exact PR match), score is neutral 0.5
+  const prScore = sigmoid(-prDelta, PR_CENTER, PR_SCALE)
 
-  const raw = 0.6 * fieldScore + 0.4 * prScore + roundBonus
-  return Math.max(0, Math.min(10, Math.round(raw * 10) / 10))
+  const raw = placeScore * WEIGHT_PLACE + gapScore * WEIGHT_GAP + prScore * WEIGHT_PR
+
+  // Map 0–1 to 1–10 (floor at 1 so even last place gets a score)
+  return Math.round(clamp(raw * 10, 1, 10) * 10) / 10
 }
 
-// Meet-level athlete rating: best event rating + bonus for additional events.
-// Makes it genuinely hard to max out when doubling/tripling up.
+// Meet-level athlete rating: simple average across all events entered
 export function computeMeetRating(eventRatings: number[]): number {
   if (eventRatings.length === 0) return 0
-  const sorted = [...eventRatings].sort((a, b) => b - a)
-  const primary = sorted[0]
-  const additionalBonus = sorted.slice(1).reduce((sum, r) => sum + r * 0.15, 0)
-  return Math.min(10, Math.round((primary + additionalBonus) * 10) / 10)
+  const avg = eventRatings.reduce((sum, r) => sum + r, 0) / eventRatings.length
+  return Math.round(avg * 10) / 10
 }

@@ -91,12 +91,11 @@ export interface Athlete {
 }
 
 export type RatingLabel =
-  | 'Legendary'
-  | 'Outstanding'
+  | 'Elite'
   | 'Great'
   | 'Good'
   | 'Average'
-  | 'Below Average'
+  | 'Below avg'
   | 'Poor'
 
 export interface RatingTier {

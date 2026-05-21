@@ -15,8 +15,11 @@ const SCRAPE_LIMIT = parseInt(process.env.SCRAPE_LIMIT ?? '0')
 // Cron schedule — default every 6 hours during track season
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE ?? '0 */6 * * *'
 
+const args = process.argv.slice(2)
+const FORCE = args.includes('--force')
+
 export async function runScrapeJob(): Promise<void> {
-  console.log(`[${new Date().toISOString()}] Starting scrape job`)
+  console.log(`[${new Date().toISOString()}] Starting scrape job${FORCE ? ' (forced)' : ''}`)
   console.log(`  States: ${STATES.join(', ')} | Days back: ${DAYS_BACK} | Scrape athletes: ${SCRAPE_ATHLETES}`)
 
   let totalMeets = 0
@@ -37,23 +40,23 @@ export async function runScrapeJob(): Promise<void> {
     console.log(`  Found ${stubs.length} meets${SCRAPE_LIMIT > 0 ? ` (capped at ${SCRAPE_LIMIT})` : ''}`)
 
     for (const stub of limited) {
-      // Skip if we already have up-to-date data for this meet
-      const existing = await prisma.meet.findUnique({
-        where: { id: stub.athleticNetId },
-        include: { _count: { select: { events: true } } },
-      })
-
       if (!stub.hasResults) {
         console.log(`  Skipping ${stub.name} (no results)`)
         continue
       }
 
-      if (existing && existing._count.events > 0) {
-        const meetAge = Date.now() - new Date(existing.updatedAt).getTime()
-        const sixHours = 6 * 60 * 60 * 1000
-        if (meetAge < sixHours) {
-          console.log(`  Skipping ${stub.name} (cached)`)
-          continue
+      if (!FORCE) {
+        const existing = await prisma.meet.findUnique({
+          where: { id: stub.athleticNetId },
+          include: { _count: { select: { events: true } } },
+        })
+        if (existing && existing._count.events > 0) {
+          const meetAge = Date.now() - new Date(existing.updatedAt).getTime()
+          const sixHours = 6 * 60 * 60 * 1000
+          if (meetAge < sixHours) {
+            console.log(`  Skipping ${stub.name} (cached)`)
+            continue
+          }
         }
       }
 
@@ -66,7 +69,7 @@ export async function runScrapeJob(): Promise<void> {
           continue
         }
 
-        // Merge stub metadata with scraped events — stub is authoritative for fields the scraper doesn't extract
+        // Stub is authoritative for metadata the scraper can't reliably extract
         const enriched = {
           ...scraped,
           name: stub.name || scraped.name,
@@ -94,9 +97,16 @@ export async function runScrapeJob(): Promise<void> {
 }
 
 // Entry point
-const args = process.argv.slice(2)
 
-if (args[0] === '--once' || args[0] === '--run') {
+if (args[0] === '--reset-db') {
+  // Wipe all scraped data — meets cascade to events, results, and meet ratings
+  console.log('Resetting database...')
+  await prisma.meet.deleteMany()
+  await prisma.athlete.deleteMany()
+  console.log('Done.')
+  await prisma.$disconnect()
+  process.exit(0)
+} else if (args[0] === '--once' || args[0] === '--run') {
   // Run immediately and exit
   runScrapeJob()
     .catch(console.error)
