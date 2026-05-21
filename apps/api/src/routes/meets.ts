@@ -8,11 +8,7 @@ meetsRouter.get('/', async (c) => {
     orderBy: { date: 'desc' },
     include: {
       events: {
-        include: {
-          results: {
-            include: { athlete: true },
-          },
-        },
+        include: { results: true },
       },
     },
   })
@@ -31,7 +27,6 @@ meetsRouter.get('/', async (c) => {
       athleteCount: new Set(allResults.map((r) => r.athleteId)).size,
       eventCount: meet.events.length,
       topRating: topResult?.rating ?? null,
-      topRatedAthleteName: topResult?.athlete?.name ?? null,
     }
   })
 
@@ -39,23 +34,33 @@ meetsRouter.get('/', async (c) => {
 })
 
 meetsRouter.get('/:id', async (c) => {
-  const meet = await prisma.meet.findUnique({
-    where: { id: c.req.param('id') },
-    include: {
-      events: {
-        include: {
-          results: {
-            include: { athlete: true },
-            orderBy: { place: 'asc' },
+  const meetId = c.req.param('id')
+
+  const [meet, athleteRankings] = await Promise.all([
+    prisma.meet.findUnique({
+      where: { id: meetId },
+      include: {
+        events: {
+          include: {
+            results: {
+              include: { athlete: true },
+              orderBy: { place: 'asc' },
+            },
           },
         },
       },
-    },
-  })
+    }),
+    prisma.meetAthleteRating.findMany({
+      where: { meetId },
+      include: { athlete: true },
+      orderBy: { meetRating: 'desc' },
+      take: 20,
+    }),
+  ])
 
   if (!meet) return c.json({ error: 'Meet not found' }, 404)
 
-  const response = {
+  return c.json({
     id: meet.id,
     name: meet.name,
     date: meet.date.toISOString(),
@@ -84,7 +89,14 @@ meetsRouter.get('/:id', async (c) => {
         seasonBestAtMeet: r.seasonBestAtMeet,
       })),
     })),
-  }
-
-  return c.json(response)
+    athleteRankings: athleteRankings.map((ar) => ({
+      id: ar.id,
+      athleteId: ar.athleteId,
+      athleteName: ar.athlete.name,
+      meetId: ar.meetId,
+      meetRating: ar.meetRating,
+      eventCount: ar.eventCount,
+      eventRatings: ar.eventRatings as Record<string, number>,
+    })),
+  })
 })

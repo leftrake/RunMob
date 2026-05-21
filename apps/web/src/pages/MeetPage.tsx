@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import type { Meet, MeetEvent, AthleteResult } from '@runmob/shared'
+import type { Meet, MeetEvent, AthleteResult, MeetAthleteRating } from '@runmob/shared'
 import { getRatingLabel } from '@runmob/shared'
 import { api } from '../lib/api'
 import { formatDate } from '../lib/utils'
@@ -30,10 +30,6 @@ export function MeetPage() {
   if (error || !meet) return <div className="text-text-secondary text-center py-16">{error ?? 'Meet not found'}</div>
 
   const allResults = meet.events.flatMap((e) => e.results)
-  const topResult = [...allResults].sort((a, b) => b.rating - a.rating)[0]
-  const topResultAthleteName = topResult
-    ? meet.events.flatMap((e) => e.results).find((r) => r.id === topResult.id)?.athleteName
-    : undefined
 
   const filteredEvents = genderFilter === 'all'
     ? meet.events
@@ -63,13 +59,13 @@ export function MeetPage() {
         <div className="flex gap-6 pt-1">
           <Stat label="Athletes" value={String(new Set(allResults.map((r) => r.athleteId)).size)} />
           <Stat label="Events" value={String(meet.events.length)} />
-          {topResult && (
+          {meet.athleteRankings?.[0] && (
             <Stat
-              label="Top Rating"
+              label="Top Performer"
               value={
                 <span className="flex items-center gap-1.5">
-                  <RatingBadge rating={topResult.rating} size="sm" />
-                  <span className="text-text-secondary text-xs truncate max-w-[120px]">{topResultAthleteName}</span>
+                  <RatingBadge rating={meet.athleteRankings[0].meetRating} size="sm" />
+                  <span className="text-text-secondary text-xs truncate max-w-[120px]">{meet.athleteRankings[0].athleteName}</span>
                 </span>
               }
             />
@@ -77,11 +73,9 @@ export function MeetPage() {
         </div>
       </div>
 
-      {/* Meet MVP card */}
-      {topResult && topResultAthleteName && (
-        <MvpCard result={topResult} athleteName={topResultAthleteName} eventName={
-          meet.events.find((e) => e.results.some((r) => r.id === topResult.id))?.eventName ?? ''
-        } />
+      {/* Meet athlete rankings */}
+      {meet.athleteRankings && meet.athleteRankings.length > 0 && (
+        <MeetRankings rankings={meet.athleteRankings} />
       )}
 
       {/* Gender filter + event tabs */}
@@ -129,25 +123,37 @@ export function MeetPage() {
   )
 }
 
-function MvpCard({ result, athleteName, eventName }: { result: AthleteResult; athleteName: string; eventName: string }) {
+function MeetRankings({ rankings }: { rankings: MeetAthleteRating[] }) {
   return (
-    <div className="bg-surface rounded-xl p-4 border border-accent/20">
-      <p className="text-text-secondary text-xs font-medium uppercase tracking-widest mb-2">Meet MVP</p>
-      <div className="flex items-center gap-4">
-        <RatingBadge rating={result.rating} size="lg" />
-        <div>
-          <Link
-            to={`/athlete/${result.athleteId}`}
-            className="font-display text-xl font-bold text-text-primary hover:text-accent transition-colors"
-          >
-            {athleteName}
-          </Link>
-          <p className="text-text-secondary text-sm">
-            {eventName} &bull; <span className="font-mono">{result.displayTime}</span>
-            {result.prAtMeet && <span className="ml-2 text-accent text-xs font-medium">PR</span>}
-          </p>
-          <p className="text-text-secondary text-xs">{getRatingLabel(result.rating)}</p>
-        </div>
+    <div className="bg-surface rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-white/5">
+        <h2 className="font-display text-lg font-semibold text-text-primary">Meet Rankings</h2>
+        <p className="text-text-secondary text-xs mt-0.5">Best overall performance across all events</p>
+      </div>
+      <div className="divide-y divide-white/5">
+        {rankings.map((ar, i) => (
+          <div key={ar.id} className="flex items-center gap-3 px-4 py-3">
+            <span className="text-text-secondary text-sm tabular-nums w-5 shrink-0">{i + 1}</span>
+            <RatingBadge rating={ar.meetRating} size="sm" />
+            <div className="flex-1 min-w-0">
+              <Link
+                to={`/athlete/${ar.athleteId}`}
+                className="font-medium text-text-primary hover:text-accent transition-colors text-sm"
+              >
+                {ar.athleteName}
+              </Link>
+              <p className="text-text-secondary text-xs truncate">
+                {Object.entries(ar.eventRatings as Record<string, number>)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([event, rating]) => `${event} ${rating.toFixed(1)}`)
+                  .join(' · ')}
+              </p>
+            </div>
+            {ar.eventCount > 1 && (
+              <span className="text-xs text-accent/70 font-medium shrink-0">{ar.eventCount} events</span>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   )

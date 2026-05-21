@@ -76,16 +76,16 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     const eventList = await eventListPromise
     await sleep(500)
 
-    // Keep e (event ID) + d (division) together — URL format is /{gender}/{d}/{slug}, not /{e}/{slug}
-    const trackEvents = eventList.length > 0
-      ? eventList.filter((item) => TRACK_EVENTS[item.e] !== undefined)
-      : Object.keys(TRACK_EVENTS).map(Number).map((id) => ({ e: id, d: 1 }))
+    // Always try every event in TRACK_EVENTS — use division from event list when known, else d=1.
+    // Relying solely on GetEventListData caused events like 1600m to be skipped when the meet
+    // used an unexpected event ID or the list response was incomplete.
+    const divisionById = new Map(eventList.map((item) => [item.e, item.d]))
+    const trackEvents = Object.keys(TRACK_EVENTS).map(Number).map((id) => ({
+      e: id,
+      d: divisionById.get(id) ?? 1,
+    }))
 
     console.log(`  Track events to scrape: ${trackEvents.map((t) => `${TRACK_EVENTS[t.e]}(d${t.d})`).join(', ')}`)
-    const unknownIds = eventList.filter((item) => TRACK_EVENTS[item.e] === undefined)
-    if (unknownIds.length > 0) {
-      console.log(`  Unrecognized event IDs (not scraped): ${unknownIds.map((i) => `e${i.e}(d${i.d})`).join(', ')}`)
-    }
 
     const allEvents: ScrapedEvent[] = []
 

@@ -4,21 +4,27 @@ import { prisma } from '../db/client.js'
 export const athletesRouter = new Hono()
 
 athletesRouter.get('/:id', async (c) => {
-  const athlete = await prisma.athlete.findUnique({
-    where: { id: c.req.param('id') },
-    include: {
-      results: {
-        include: {
-          meetEvent: {
-            include: { meet: true },
-          },
+  const athleteId = c.req.param('id')
+
+  const [athlete, meetRatings] = await Promise.all([
+    prisma.athlete.findUnique({
+      where: { id: athleteId },
+      include: {
+        results: {
+          include: { meetEvent: { include: { meet: true } } },
+          orderBy: { createdAt: 'desc' },
         },
-        orderBy: { createdAt: 'desc' },
       },
-    },
-  })
+    }),
+    prisma.meetAthleteRating.findMany({
+      where: { athleteId },
+      orderBy: { meet: { date: 'desc' } },
+    }),
+  ])
 
   if (!athlete) return c.json({ error: 'Athlete not found' }, 404)
+
+  const meetRatingById = new Map(meetRatings.map((mr) => [mr.meetId, mr.meetRating]))
 
   return c.json({
     id: athlete.id,
@@ -36,12 +42,14 @@ athletesRouter.get('/:id', async (c) => {
       meetName: r.meetEvent.meet.name,
       meetDate: r.meetEvent.meet.date.toISOString(),
       eventName: r.meetEvent.eventName,
+      round: r.round,
       place: r.place,
       displayTime: r.displayTime,
       rating: r.rating,
       ratingLabel: r.ratingLabel,
       prAtMeet: r.prAtMeet,
       seasonBestAtMeet: r.seasonBestAtMeet,
+      meetRating: meetRatingById.get(r.meetEvent.meetId) ?? null,
     })),
   })
 })
