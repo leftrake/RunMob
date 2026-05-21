@@ -108,10 +108,12 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
             try {
               const json = await res.json() as Record<string, unknown>
               if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
+              const rounds = (json.rounds as Array<{ IDRound: string; RoundDesc: string }> | undefined) ?? []
+              const rowCount = ((json.resultsTF as unknown[][]) ?? []).flat().length
+              console.log(`    GetResultsData3: ${rowCount} rows, rounds=[${rounds.map(r => r.RoundDesc).join(',')}]`)
               const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
               if (parsed && parsed.results.length > 0) {
                 if (!eventMeta) eventMeta = { eventName: parsed.eventName, gender: parsed.gender }
-                // Deduplicate by athlete+round key in case the same response fires twice
                 const existingKeys = new Set(allRoundResults.map((r) => `${r.athleteName}-${r.round}`))
                 for (const r of parsed.results) {
                   if (!existingKeys.has(`${r.athleteName}-${r.round}`)) allRoundResults.push(r)
@@ -122,11 +124,8 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          await sleep(800)
-          // Always click Finals — triggers the finals GetResultsData3 call even when prelims auto-loaded
-          try { await ep.click('text=Finals', { timeout: 2000 }) } catch { /* no Finals tab */ }
-          // Wait 3.5s to capture both auto-load (prelims) and Finals click response
-          const deadline = Date.now() + 3500
+          // Both prelims and finals load automatically — wait for all GetResultsData3 calls to complete
+          const deadline = Date.now() + 5000
           while (!noResults && Date.now() < deadline) await sleep(200)
 
           const result = eventMeta && allRoundResults.length > 0
