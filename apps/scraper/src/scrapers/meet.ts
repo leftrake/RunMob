@@ -100,11 +100,13 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
           // Use a variable rather than resolving immediately — always click Finals so we get
           // finals results even when prelims auto-load first on page navigation.
           let latestResult: ScrapedEvent | null = null
+          let noResults = false  // set when GetResultsData3 says currentEventValid: false
 
           ep.on('response', async (res) => {
             if (!res.url().includes('GetResultsData3') || !res.ok()) return
             try {
               const json = await res.json() as Record<string, unknown>
+              if (json.currentEventValid === false) { noResults = true; return }
               const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
               if (parsed && parsed.results.length > 0) latestResult = parsed
             } catch { /* ignore */ }
@@ -117,9 +119,9 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
           if (!latestResult) {
             try { await ep.click('text=Finals', { timeout: 2000 }) } catch { /* no Finals tab */ }
           }
-          // Wait up to 8s for results, exit early once they arrive
+          // Wait up to 8s for results, exit early once they arrive or event has no results
           const deadline = Date.now() + 8000
-          while (!latestResult && Date.now() < deadline) await sleep(200)
+          while (!latestResult && !noResults && Date.now() < deadline) await sleep(200)
 
           const result = latestResult
           if (result && result.results.length > 0) {
