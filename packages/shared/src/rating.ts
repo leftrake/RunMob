@@ -1,12 +1,12 @@
 import type { RatingLabel, RatingTier } from './types.js'
 
 export const RATING_TIERS: RatingTier[] = [
-  { min: 9.0, label: 'Elite',     color: '#f59e0b' }, // amber
-  { min: 8.0, label: 'Great',     color: '#22c55e' }, // green
-  { min: 7.0, label: 'Good',      color: '#60a5fa' }, // blue
-  { min: 5.5, label: 'Average',   color: '#a78bfa' }, // purple
-  { min: 4.0, label: 'Below avg', color: '#9ca3af' }, // gray
-  { min: 0,   label: 'Poor',      color: '#9ca3af' }, // gray
+  { min: 9.0, label: 'Elite',     color: '#4ade80' }, // bright green
+  { min: 8.0, label: 'Great',     color: '#a3e635' }, // lime
+  { min: 7.0, label: 'Good',      color: '#facc15' }, // yellow
+  { min: 5.5, label: 'Average',   color: '#f97316' }, // orange
+  { min: 4.0, label: 'Below avg', color: '#f87171' }, // light red
+  { min: 0,   label: 'Poor',      color: '#ef4444' }, // red
 ]
 
 export function getRatingTier(rating: number): RatingTier {
