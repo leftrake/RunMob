@@ -103,7 +103,6 @@ if (args[0] === '--once' || args[0] === '--run') {
     .finally(() => prisma.$disconnect().then(() => process.exit(0)))
 } else if (args[0] === '--meet' && args[1]) {
   // Scrape a single meet by ID: tsx src/index.ts --meet <id>
-  const { scrapeMeet } = await import('./scrapers/meet.js')
   const scraped = await scrapeMeet(args[1])
   if (scraped) {
     await ingestMeet(scraped, { scrapeAthletes: SCRAPE_ATHLETES })

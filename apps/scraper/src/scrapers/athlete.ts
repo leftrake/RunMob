@@ -43,7 +43,7 @@ export async function scrapeAthleteProfile(
     console.error(`  Error scraping athlete ${athleticNetId}:`, err)
     return null
   } finally {
-    await context.close()
+    await page.close()
   }
 }
 
