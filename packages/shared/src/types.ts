@@ -40,6 +40,7 @@ export interface AthleteResult {
   athleteId: string
   athleteName: string
   meetEventId: string
+  round: string
   place: number
   time: number
   displayTime: string
