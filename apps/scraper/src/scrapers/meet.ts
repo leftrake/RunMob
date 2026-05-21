@@ -195,11 +195,20 @@ function parseResultsData3Response(
 
     if (results.length === 0) return null
 
+    // Deduplicate by athlete: keep best (lowest) time — handles prelims+finals on same page
+    const best = new Map<string, ScrapedResult>()
+    for (const r of results) {
+      const existing = best.get(r.athleteName)
+      if (!existing || r.timeSeconds < existing.timeSeconds) best.set(r.athleteName, r)
+    }
+    const deduped = Array.from(best.values()).sort((a, b) => a.timeSeconds - b.timeSeconds)
+    deduped.forEach((r, i) => { r.place = i + 1 })
+
     let eventName = TRACK_EVENTS[eventId]
     if (!eventName) return null
     if (eventId === 9 && gender === 'F') eventName = '100mH'
 
-    return { eventName, gender, results }
+    return { eventName, gender, results: deduped }
   } catch {
     return null
   }
