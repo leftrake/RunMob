@@ -82,6 +82,10 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
       : Object.keys(TRACK_EVENTS).map(Number).map((id) => ({ e: id, d: 1 }))
 
     console.log(`  Track events to scrape: ${trackEvents.map((t) => `${TRACK_EVENTS[t.e]}(d${t.d})`).join(', ')}`)
+    const unknownIds = eventList.filter((item) => TRACK_EVENTS[item.e] === undefined)
+    if (unknownIds.length > 0) {
+      console.log(`  Unrecognized event IDs (not scraped): ${unknownIds.map((i) => `e${i.e}(d${i.d})`).join(', ')}`)
+    }
 
     const allEvents: ScrapedEvent[] = []
 
@@ -127,10 +131,13 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          // Wait up to 10s total, but exit 2s after the last response arrives
+          // Wait up to 10s total; exit 2s after last results response.
+          // Only use noResults to bail early when we have zero results — a "no results"
+          // response can fire before the real results response on some events.
           const startedAt = Date.now()
-          while (!noResults && Date.now() - startedAt < 10_000) {
+          while (Date.now() - startedAt < 10_000) {
             await sleep(200)
+            if (noResults && responseCount === 0) break
             if (responseCount > 0 && Date.now() - lastResponseAt > 2_000) break
           }
 
