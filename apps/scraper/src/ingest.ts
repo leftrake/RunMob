@@ -80,75 +80,6 @@ export async function ingestMeet(
     for (const r of scrapedEvent.results) {
       const relay = isRelayEvent(scrapedEvent.eventName)
 
-      if (relay) {
-        // Skip relay results where individual members are unknown — prevents fake team profiles
-        if (!r.relayMembers || r.relayMembers.length === 0) continue
-
-        const roundSize = roundGroups.get(r.round)?.length ?? 1
-        const stats = roundStats.get(r.round) ?? { winnerTime: r.timeSeconds, spread: 0 }
-        const relayRating = computeRating({
-          place: r.place,
-          fieldSize: roundSize,
-          gapToWinner: Math.max(0, r.timeSeconds - stats.winnerTime),
-          fieldSpread: stats.spread,
-          prDelta: 0,
-          eventName: scrapedEvent.eventName,
-          gender: r.gender,
-          round: r.round,
-        })
-
-        for (const member of r.relayMembers) {
-          let memberAthlete = await prisma.athlete.findFirst({ where: { name: member.name, school: r.school } })
-          if (!memberAthlete && member.athleticNetId) {
-            memberAthlete = await prisma.athlete.findUnique({ where: { id: member.athleticNetId } })
-          }
-          if (!memberAthlete) {
-            memberAthlete = await prisma.athlete.create({
-              data: {
-                id: member.athleticNetId ?? undefined,
-                name: member.name,
-                school: r.school,
-                state: '',
-                gradYear: new Date().getFullYear() + 1,
-                gender: r.gender,
-                events: [scrapedEvent.eventName],
-                seasonBests: {},
-                allTimePRs: {},
-              },
-            })
-            athletesUpserted++
-          }
-          const round = r.round ?? 'Finals'
-          await prisma.athleteResult.upsert({
-            where: { id: `${memberAthlete.id}-${meetEvent.id}-${round}` },
-            create: {
-              id: `${memberAthlete.id}-${meetEvent.id}-${round}`,
-              athleteId: memberAthlete.id,
-              meetEventId: meetEvent.id,
-              round,
-              place: r.place,
-              time: r.timeSeconds,
-              displayTime: r.displayTime,
-              teamName: r.school,
-              rating: relayRating,
-              ratingLabel: getRatingLabel(relayRating),
-              prAtMeet: false,
-              seasonBestAtMeet: false,
-            },
-            update: {
-              place: r.place,
-              time: r.timeSeconds,
-              displayTime: r.displayTime,
-              rating: relayRating,
-              ratingLabel: getRatingLabel(relayRating),
-            },
-          })
-          resultsUpserted++
-        }
-        continue
-      }
-
-      // Non-relay path
       let athlete = await prisma.athlete.findFirst({
         where: { name: r.athleteName, school: r.school },
       })
@@ -208,10 +139,11 @@ export async function ingestMeet(
         round: r.round,
       })
 
-      const prAtMeet = prSeconds !== null && r.timeSeconds <= prSeconds
-      const seasonBestAtMeet = sbSeconds === null || r.timeSeconds <= sbSeconds
+      // Relay results: no PR/SB badges (team time ≠ individual effort), no meet-rating contribution
+      const prAtMeet = !relay && prSeconds !== null && r.timeSeconds <= prSeconds
+      const seasonBestAtMeet = !relay && (sbSeconds === null || r.timeSeconds <= sbSeconds)
 
-      if (sbSeconds === null || r.timeSeconds < sbSeconds) {
+      if (!relay && (sbSeconds === null || r.timeSeconds < sbSeconds)) {
         await prisma.athlete.update({
           where: { id: athlete.id },
           data: {
@@ -223,7 +155,7 @@ export async function ingestMeet(
         })
       }
 
-      if (prSeconds === null || r.timeSeconds < prSeconds) {
+      if (!relay && (prSeconds === null || r.timeSeconds < prSeconds)) {
         await prisma.athlete.update({
           where: { id: athlete.id },
           data: {
@@ -235,7 +167,7 @@ export async function ingestMeet(
         })
       }
 
-      if (!(athlete.events as string[]).includes(scrapedEvent.eventName)) {
+      if (!relay && !(athlete.events as string[]).includes(scrapedEvent.eventName)) {
         await prisma.athlete.update({
           where: { id: athlete.id },
           data: { events: { push: scrapedEvent.eventName } },
@@ -271,10 +203,12 @@ export async function ingestMeet(
       })
       resultsUpserted++
 
-      const eventKey = `${scrapedEvent.eventName} ${r.gender}`
-      const athleteMap = athleteBestRatings.get(athlete.id) ?? new Map<string, number>()
-      if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
-      athleteBestRatings.set(athlete.id, athleteMap)
+      if (!relay) {
+        const eventKey = `${scrapedEvent.eventName} ${r.gender}`
+        const athleteMap = athleteBestRatings.get(athlete.id) ?? new Map<string, number>()
+        if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
+        athleteBestRatings.set(athlete.id, athleteMap)
+      }
     }
   }
 
