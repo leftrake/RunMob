@@ -77,16 +77,6 @@ export async function searchRecentMeets(
     }
 
     const json = (result as { data: Record<string, unknown> }).data
-    console.log(`  Response keys: ${Object.keys(json).join(', ')}`)
-
-    const firstList = Object.values(json).find((v) => Array.isArray(v)) as unknown[] | undefined
-    if (firstList?.length) {
-      const first = firstList[0] as Record<string, unknown>
-      console.log(`  First item keys: ${Object.keys(first).join(', ')}`)
-      console.log(`  First item: ${JSON.stringify(first).slice(0, 300)}`)
-      console.log(`  rsUrl value: ${JSON.stringify(first.rsUrl ?? first.RsUrl ?? 'NOT FOUND')}`)
-    }
-
     const events = parseEventsResponse(json, state)
     return events.filter((m) => {
       const d = new Date(m.date)
@@ -104,13 +94,6 @@ function parseEventsResponse(json: Record<string, unknown>, state: string): Meet
 
   const list =
     (json.events as unknown[]) ??
-    (json.Events as unknown[]) ??
-    (json.meets as unknown[]) ??
-    (json.Meets as unknown[]) ??
-    (json.results as unknown[]) ??
-    (json.Results as unknown[]) ??
-    (json.data as unknown[]) ??
-    (Array.isArray(json) ? json as unknown[] : null) ??
     (Object.values(json).find((v) => Array.isArray(v)) as unknown[] | undefined) ??
     []
 

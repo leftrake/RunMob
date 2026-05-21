@@ -10,6 +10,7 @@ export interface ScrapedResult {
   timeSeconds: number
   gender: 'M' | 'F'
   wind?: string
+  round: string
 }
 
 export interface ScrapedEvent {
@@ -89,44 +90,48 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     // Fresh pages share CF clearance cookies via the shared browser context.
     for (const { e: eventId, d: division } of trackEvents) {
       for (const gender of ['m', 'f'] as const) {
-        const eventSlug = (TRACK_EVENTS[eventId] ?? '').toLowerCase()
+        // Girls run 100mH, boys run 110mH — different slug for female event 9
+        const eventSlug = (eventId === 9 && gender === 'f')
+          ? '100mh'
+          : (TRACK_EVENTS[eventId] ?? '').toLowerCase()
         const eventUrl = `${baseUrl}/${gender}/${division}/${eventSlug}`
 
         const { page: ep } = await newPage()
         try {
-          const resultPromise = new Promise<ScrapedEvent | null>((resolve) => {
-            const t = setTimeout(() => {
-              console.log(`    Timeout waiting for GetResultsData3: ${eventUrl}`)
-              resolve(null)
-            }, 20_000)
-            ep.on('response', async (res) => {
-              if (!res.url().includes('GetResultsData3')) return
-              if (!res.ok()) {
-                // 429 = rate limited, give up on this event
-                if (res.status() === 429) {
-                  clearTimeout(t)
-                  console.log(`    GetResultsData3 429 for ${eventUrl}`)
-                  resolve(null)
+          // Accumulate results from ALL GetResultsData3 responses (prelims + finals are separate calls)
+          const allRoundResults: ScrapedResult[] = []
+          let eventMeta: { eventName: string; gender: 'M' | 'F' } | null = null
+          let noResults = false
+
+          ep.on('response', async (res) => {
+            if (!res.url().includes('GetResultsData3') || !res.ok()) return
+            try {
+              const json = await res.json() as Record<string, unknown>
+              if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
+              const outerArr = (json.resultsTF as unknown[][]) ?? []
+              const rowCount = outerArr.flat().length
+              const sample = outerArr[0]?.[0] as Record<string, unknown> | undefined
+              console.log(`    GetResultsData3: ${rowCount} rows, outerLen=${outerArr.length}, sample=${JSON.stringify(sample).slice(0, 300)}`)
+              const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
+              if (parsed && parsed.results.length > 0) {
+                if (!eventMeta) eventMeta = { eventName: parsed.eventName, gender: parsed.gender }
+                const existingKeys = new Set(allRoundResults.map((r) => `${r.athleteName}-${r.round}`))
+                for (const r of parsed.results) {
+                  if (!existingKeys.has(`${r.athleteName}-${r.round}`)) allRoundResults.push(r)
                 }
-                return
               }
-              try {
-                const json = await res.json() as Record<string, unknown>
-                const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
-                if (parsed && parsed.results.length > 0) {
-                  clearTimeout(t)
-                  resolve(parsed)
-                }
-                // empty resultsTF = first/metadata call — keep listening for the results call
-              } catch {
-                // parse error — keep listening
-              }
-            })
+            } catch { /* ignore */ }
           })
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          const result = await resultPromise
+          // Both prelims and finals load automatically — wait for all GetResultsData3 calls to complete
+          const deadline = Date.now() + 5000
+          while (!noResults && Date.now() < deadline) await sleep(200)
+
+          const result = eventMeta && allRoundResults.length > 0
+            ? { eventName: eventMeta.eventName, gender: eventMeta.gender, results: allRoundResults }
+            : null
           if (result && result.results.length > 0) {
             allEvents.push(result)
             console.log(`    ${result.eventName} ${gender}: ${result.results.length} results`)
@@ -168,39 +173,47 @@ function parseResultsData3Response(
 ): ScrapedEvent | null {
   try {
     const outerList = (json.resultsTF as unknown[][]) ?? []
-    const rawResults = outerList.flat()
-    if (rawResults.length === 0) return null
+    if (outerList.length === 0 || outerList.every((arr) => arr.length === 0)) return null
+
+    const roundLabels = (json.rounds as Array<{ RoundDesc: string }> | undefined) ?? []
 
     const results: ScrapedResult[] = []
 
-    for (const raw of rawResults) {
-      const r = raw as Record<string, unknown>
-      const displayTime = String(r.Result ?? '').trim()
-      if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
-      // Field event formats: "15.23m" (meters) or "50-01.00" (feet-inches)
-      if (/m$/.test(displayTime) || /-\d{2}/.test(displayTime)) continue
+    for (let ri = 0; ri < outerList.length; ri++) {
+      const round = roundLabels[ri]?.RoundDesc ?? (ri === 0 ? 'Finals' : `Round ${ri + 1}`)
+      const roundResults: ScrapedResult[] = []
 
-      let timeSeconds: number
-      try {
-        timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
-        if (isNaN(timeSeconds) || timeSeconds <= 0) continue
-      } catch { continue }
+      for (const raw of outerList[ri]) {
+        const r = raw as Record<string, unknown>
+        const displayTime = String(r.Result ?? '').trim()
+        if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
+        if (/m$/.test(displayTime) || /-\d{2}/.test(displayTime)) continue
 
-      const firstName = String(r.FirstName ?? '').trim()
-      const lastName  = String(r.LastName  ?? '').trim()
-      const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
-      if (!athleteName) continue
+        let timeSeconds: number
+        try {
+          timeSeconds = parseTimeToSeconds(displayTime.replace(/[a-zA-Z]+$/, ''))
+          if (isNaN(timeSeconds) || timeSeconds <= 0) continue
+        } catch { continue }
 
-      results.push({
-        place: parseInt(String(r.Place ?? '0')) || results.length + 1,
-        athleteName,
-        athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
-        school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
-        displayTime,
-        timeSeconds,
-        gender,
-        wind: r.Wind != null ? String(r.Wind) : undefined,
-      })
+        const firstName = String(r.FirstName ?? '').trim()
+        const lastName  = String(r.LastName  ?? '').trim()
+        const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
+        if (!athleteName) continue
+
+        roundResults.push({
+          place: parseInt(String(r.Place ?? '0')) || roundResults.length + 1,
+          athleteName,
+          athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
+          school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
+          displayTime,
+          timeSeconds,
+          gender,
+          wind: r.Wind != null ? String(r.Wind) : undefined,
+          round,
+        })
+      }
+
+      results.push(...roundResults)
     }
 
     if (results.length === 0) return null
