@@ -112,6 +112,11 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
               }
               try {
                 const json = await res.json() as Record<string, unknown>
+                const rawList = ((json.resultsTF as unknown[][]) ?? []).flat()
+                if (rawList.length > 0) {
+                  const sample = rawList[0] as Record<string, unknown>
+                  console.log(`    GetResultsData3 ${rawList.length} rows, sample Result="${sample.Result}" Place="${sample.Place}"`)
+                }
                 const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
                 if (parsed && parsed.results.length > 0) {
                   clearTimeout(t)
