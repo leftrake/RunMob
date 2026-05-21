@@ -3,7 +3,7 @@ import { searchRecentMeets } from './scrapers/search.js'
 import { scrapeMeet } from './scrapers/meet.js'
 import { ingestMeet, prisma } from './ingest.js'
 import { closeBrowser, sleep } from './browser.js'
-import { computeRating, computeMeetRating, getRatingLabel } from '@runmob/shared'
+import { computeRating, computeMeetRating, getRatingLabel, isRelayEvent } from '@runmob/shared'
 import { scrapeAthleteProfile, safeParseTime } from './scrapers/athlete.js'
 
 // States to scrape — extend as needed
@@ -155,10 +155,12 @@ async function rerateAll(): Promise<void> {
         })
         totalResults++
 
-        const eventKey = `${event.eventName} ${event.gender}`
-        const athleteMap = athleteBestRatings.get(result.athleteId) ?? new Map<string, number>()
-        if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
-        athleteBestRatings.set(result.athleteId, athleteMap)
+        if (!isRelayEvent(event.eventName)) {
+          const eventKey = `${event.eventName} ${event.gender}`
+          const athleteMap = athleteBestRatings.get(result.athleteId) ?? new Map<string, number>()
+          if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
+          athleteBestRatings.set(result.athleteId, athleteMap)
+        }
       }
     }
 

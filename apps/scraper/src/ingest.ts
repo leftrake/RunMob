@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client'
-import { computeRating, computeMeetRating, getRatingLabel } from '@runmob/shared'
+import { computeRating, computeMeetRating, getRatingLabel, isRelayEvent } from '@runmob/shared'
 import type { ScrapedMeet } from './scrapers/meet.js'
 import { scrapeAthleteProfile, safeParseTime } from './scrapers/athlete.js'
 import { sleep } from './browser.js'
@@ -137,41 +137,43 @@ export async function ingestMeet(
         round: r.round,
       })
 
-      // Only flag PR when we have a baseline and they beat it
-      const prAtMeet = prSeconds !== null && r.timeSeconds <= prSeconds
-      const seasonBestAtMeet = sbSeconds === null || r.timeSeconds <= sbSeconds
+      const relay = isRelayEvent(scrapedEvent.eventName)
 
-      if (sbSeconds === null || r.timeSeconds < sbSeconds) {
-        await prisma.athlete.update({
-          where: { id: athlete.id },
-          data: {
-            seasonBests: {
-              ...(athlete.seasonBests as Record<string, string>),
-              [scrapedEvent.eventName]: r.displayTime,
+      // Relay results are stored for meet display but don't update individual athlete profiles
+      const prAtMeet = !relay && prSeconds !== null && r.timeSeconds <= prSeconds
+      const seasonBestAtMeet = !relay && (sbSeconds === null || r.timeSeconds <= sbSeconds)
+
+      if (!relay) {
+        if (sbSeconds === null || r.timeSeconds < sbSeconds) {
+          await prisma.athlete.update({
+            where: { id: athlete.id },
+            data: {
+              seasonBests: {
+                ...(athlete.seasonBests as Record<string, string>),
+                [scrapedEvent.eventName]: r.displayTime,
+              },
             },
-          },
-        })
-      }
+          })
+        }
 
-      // Persist all-time PR so future meets have a baseline
-      if (prSeconds === null || r.timeSeconds < prSeconds) {
-        await prisma.athlete.update({
-          where: { id: athlete.id },
-          data: {
-            allTimePRs: {
-              ...(athlete.allTimePRs as Record<string, string>),
-              [scrapedEvent.eventName]: r.displayTime,
+        if (prSeconds === null || r.timeSeconds < prSeconds) {
+          await prisma.athlete.update({
+            where: { id: athlete.id },
+            data: {
+              allTimePRs: {
+                ...(athlete.allTimePRs as Record<string, string>),
+                [scrapedEvent.eventName]: r.displayTime,
+              },
             },
-          },
-        })
-      }
+          })
+        }
 
-      // Add event to athlete's event list if not already there
-      if (!(athlete.events as string[]).includes(scrapedEvent.eventName)) {
-        await prisma.athlete.update({
-          where: { id: athlete.id },
-          data: { events: { push: scrapedEvent.eventName } },
-        })
+        if (!(athlete.events as string[]).includes(scrapedEvent.eventName)) {
+          await prisma.athlete.update({
+            where: { id: athlete.id },
+            data: { events: { push: scrapedEvent.eventName } },
+          })
+        }
       }
 
       const round = r.round ?? 'Finals'
@@ -203,11 +205,13 @@ export async function ingestMeet(
       })
       resultsUpserted++
 
-      // Track best rating per event per athlete (for meet-level rating)
-      const eventKey = `${scrapedEvent.eventName} ${r.gender}`
-      const athleteMap = athleteBestRatings.get(athlete.id) ?? new Map<string, number>()
-      if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
-      athleteBestRatings.set(athlete.id, athleteMap)
+      // Relay results don't count toward individual meet ratings
+      if (!relay) {
+        const eventKey = `${scrapedEvent.eventName} ${r.gender}`
+        const athleteMap = athleteBestRatings.get(athlete.id) ?? new Map<string, number>()
+        if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
+        athleteBestRatings.set(athlete.id, athleteMap)
+      }
     }
   }
 
