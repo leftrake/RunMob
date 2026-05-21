@@ -108,9 +108,10 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
             try {
               const json = await res.json() as Record<string, unknown>
               if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
-              const rounds = (json.rounds as Array<{ IDRound: string; RoundDesc: string }> | undefined) ?? []
-              const rowCount = ((json.resultsTF as unknown[][]) ?? []).flat().length
-              console.log(`    GetResultsData3: ${rowCount} rows, rounds=[${rounds.map(r => r.RoundDesc).join(',')}]`)
+              const outerArr = (json.resultsTF as unknown[][]) ?? []
+              const rowCount = outerArr.flat().length
+              const sample = outerArr[0]?.[0] as Record<string, unknown> | undefined
+              console.log(`    GetResultsData3: ${rowCount} rows, outerLen=${outerArr.length}, sample=${JSON.stringify(sample).slice(0, 300)}`)
               const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
               if (parsed && parsed.results.length > 0) {
                 if (!eventMeta) eventMeta = { eventName: parsed.eventName, gender: parsed.gender }
