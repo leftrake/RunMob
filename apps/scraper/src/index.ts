@@ -43,6 +43,11 @@ export async function runScrapeJob(): Promise<void> {
         include: { _count: { select: { events: true } } },
       })
 
+      if (!stub.hasResults) {
+        console.log(`  Skipping ${stub.name} (no results)`)
+        continue
+      }
+
       if (existing && existing._count.events > 0) {
         const meetAge = Date.now() - new Date(existing.updatedAt).getTime()
         const sixHours = 6 * 60 * 60 * 1000

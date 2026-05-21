@@ -8,7 +8,8 @@ export interface MeetStub {
   state: string
   level: 'hs' | 'college' | 'open'
   division: string | null
-  rsUrl: string | null   // results page URL from AthleticNET
+  rsUrl: string | null
+  hasResults: boolean
 }
 
 export async function searchRecentMeets(
@@ -158,6 +159,7 @@ function parseMeetStub(raw: Record<string, unknown>, state: string): MeetStub | 
       level: inferLevel(divisionRaw),
       division: inferDivision(divisionRaw),
       rsUrl,
+      hasResults: Boolean(raw.HasResults ?? raw.hasResults ?? false),
     }
   } catch {
     return null
