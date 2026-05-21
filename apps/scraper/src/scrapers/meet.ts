@@ -75,21 +75,22 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     const eventList = await eventListPromise
     await sleep(500)
 
-    const trackEventIds = eventList.length > 0
-      ? eventList.map((e) => e.e).filter((id) => TRACK_EVENTS[id] !== undefined)
-      : Object.keys(TRACK_EVENTS).map(Number)
+    // Keep e (event ID) + d (division) together — URL format is /{gender}/{d}/{slug}, not /{e}/{slug}
+    const trackEvents = eventList.length > 0
+      ? eventList.filter((item) => TRACK_EVENTS[item.e] !== undefined)
+      : Object.keys(TRACK_EVENTS).map(Number).map((id) => ({ e: id, d: 1 }))
 
-    console.log(`  Track events to scrape: ${trackEventIds.join(', ')}`)
+    console.log(`  Track events to scrape: ${trackEvents.map((t) => `${TRACK_EVENTS[t.e]}(d${t.d})`).join(', ')}`)
 
     const allEvents: ScrapedEvent[] = []
 
     // Use a fresh page per event — repeated page.goto() within the same page triggers
     // SPA client-side routing which skips the GetResultsData3 network call.
     // Fresh pages share CF clearance cookies via the shared browser context.
-    for (const eventId of trackEventIds) {
+    for (const { e: eventId, d: division } of trackEvents) {
       for (const gender of ['m', 'f'] as const) {
         const eventSlug = (TRACK_EVENTS[eventId] ?? '').toLowerCase()
-        const eventUrl = `${baseUrl}/${gender}/${eventId}/${eventSlug}`
+        const eventUrl = `${baseUrl}/${gender}/${division}/${eventSlug}`
 
         const { page: ep } = await newPage()
         try {
