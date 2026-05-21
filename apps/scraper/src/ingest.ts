@@ -100,11 +100,11 @@ export async function ingestMeet(
         athletesUpserted++
       }
 
-      // Look up athlete's current season best and PR for this event
+      // Look up athlete's best time from PRIOR meets only — same-meet results don't count as SB
       const existingResults = await prisma.athleteResult.findMany({
         where: {
           athleteId: athlete.id,
-          meetEvent: { eventName: scrapedEvent.eventName },
+          meetEvent: { eventName: scrapedEvent.eventName, meetId: { not: meet.id } },
         },
         orderBy: { time: 'asc' },
         take: 1,
@@ -127,7 +127,8 @@ export async function ingestMeet(
       })
 
       const prAtMeet = prSeconds !== null && r.timeSeconds <= prSeconds
-      const seasonBestAtMeet = sbSeconds !== null && r.timeSeconds <= sbSeconds
+      // sbSeconds is null when this is the athlete's first recorded result — that's always an SB
+      const seasonBestAtMeet = sbSeconds === null || r.timeSeconds <= sbSeconds
 
       // Update athlete's season best if this is faster
       if (sbSeconds === null || r.timeSeconds < sbSeconds) {
