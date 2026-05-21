@@ -126,6 +126,12 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+          await sleep(1500)
+          // For events with sub-selectors (hurdle heights, rounds), click the first active/available option
+          // so the SPA fires the second GetResultsData3 call with actual results.
+          for (const selector of ['text=Finals', 'li.active a', '.event-type-list li:first-child a', 'ul.nav li:first-child a']) {
+            try { await ep.click(selector, { timeout: 1500 }) } catch { /* not found */ }
+          }
           const result = await resultPromise
           if (result && result.results.length > 0) {
             allEvents.push(result)
