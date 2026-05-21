@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client'
-import { computeRating, getRatingLabel, parseTimeToSeconds } from '@runmob/shared'
+import { computeRating, computeMeetRating, getRatingLabel } from '@runmob/shared'
 import type { ScrapedMeet } from './scrapers/meet.js'
 import { scrapeAthleteProfile, safeParseTime } from './scrapers/athlete.js'
 import { sleep } from './browser.js'
@@ -19,7 +19,6 @@ export async function ingestMeet(
 ): Promise<IngestResult> {
   console.log(`Ingesting meet: ${scraped.name}`)
 
-  // Upsert the meet
   const meet = await prisma.meet.upsert({
     where: { id: scraped.athleticNetId },
     create: {
@@ -45,45 +44,45 @@ export async function ingestMeet(
   let resultsUpserted = 0
   let athletesUpserted = 0
 
+  // Accumulate best rating per athlete per event for meet-level rating computation
+  const athleteBestRatings = new Map<string, Map<string, number>>()
+
   for (const scrapedEvent of scraped.events) {
-    // Upsert meet event
     const existingEvent = await prisma.meetEvent.findFirst({
       where: { meetId: meet.id, eventName: scrapedEvent.eventName, gender: scrapedEvent.gender },
     })
-
     const meetEvent = existingEvent ?? await prisma.meetEvent.create({
       data: { meetId: meet.id, eventName: scrapedEvent.eventName, gender: scrapedEvent.gender },
     })
     eventsUpserted++
 
-    // Pre-compute per-round field stats so ratings are relative to each round's field
+    // Log round breakdown
+    const roundCounts = scrapedEvent.results.reduce<Record<string, number>>((acc, r) => {
+      acc[r.round] = (acc[r.round] ?? 0) + 1
+      return acc
+    }, {})
+    console.log(`  ${scrapedEvent.eventName} ${scrapedEvent.gender}: ${Object.entries(roundCounts).map(([r, n]) => `${r}=${n}`).join(', ')}`)
+
+    // Per-round field sizes
     const roundGroups = new Map<string, typeof scrapedEvent.results>()
     for (const r of scrapedEvent.results) {
       const group = roundGroups.get(r.round) ?? []
       group.push(r)
       roundGroups.set(r.round, group)
     }
-    const roundFieldAvg = new Map<string, number | null>()
-    for (const [round, results] of roundGroups) {
-      const times = results.map((r) => r.timeSeconds).filter((t) => t > 0)
-      roundFieldAvg.set(round, times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : null)
-    }
 
     for (const r of scrapedEvent.results) {
-      // Find or create athlete
       let athlete = await prisma.athlete.findFirst({
         where: { name: r.athleteName, school: r.school },
       })
 
       if (!athlete) {
-        // Optionally scrape athlete profile for PR history
         let profile = null
         if (opts.scrapeAthletes && r.athleticNetAthleteId) {
           console.log(`    Fetching profile for ${r.athleteName}...`)
           profile = await scrapeAthleteProfile(r.athleticNetAthleteId)
           await sleep(500)
         }
-
         athlete = await prisma.athlete.create({
           data: {
             id: r.athleticNetAthleteId ?? undefined,
@@ -100,8 +99,8 @@ export async function ingestMeet(
         athletesUpserted++
       }
 
-      // Look up athlete's best time from PRIOR meets only — same-meet results don't count as SB
-      const existingResults = await prisma.athleteResult.findMany({
+      // SB from prior meets only
+      const priorResults = await prisma.athleteResult.findMany({
         where: {
           athleteId: athlete.id,
           meetEvent: { eventName: scrapedEvent.eventName, meetId: { not: meet.id } },
@@ -109,8 +108,7 @@ export async function ingestMeet(
         orderBy: { time: 'asc' },
         take: 1,
       })
-
-      const sbSeconds = existingResults[0]?.time ?? null
+      const sbSeconds = priorResults[0]?.time ?? null
       const prSeconds = safeParseTime(
         (athlete.allTimePRs as Record<string, string>)[scrapedEvent.eventName] ?? '',
       )
@@ -120,34 +118,30 @@ export async function ingestMeet(
         place: r.place,
         fieldSize: roundSize,
         timeSeconds: r.timeSeconds,
-        seasonBestSeconds: sbSeconds,
+        eventName: scrapedEvent.eventName,
+        gender: r.gender,
         personalBestSeconds: prSeconds,
-        fieldAvgSeasonBest: roundFieldAvg.get(r.round) ?? null,
-        isLowerBetter: true,
+        round: r.round,
       })
 
       const prAtMeet = prSeconds !== null && r.timeSeconds <= prSeconds
-      // sbSeconds is null when this is the athlete's first recorded result — that's always an SB
       const seasonBestAtMeet = sbSeconds === null || r.timeSeconds <= sbSeconds
 
-      // Update athlete's season best if this is faster
       if (sbSeconds === null || r.timeSeconds < sbSeconds) {
-        const updatedBests = {
-          ...(athlete.seasonBests as Record<string, string>),
-          [scrapedEvent.eventName]: r.displayTime,
-        }
         await prisma.athlete.update({
           where: { id: athlete.id },
-          data: { seasonBests: updatedBests },
+          data: {
+            seasonBests: {
+              ...(athlete.seasonBests as Record<string, string>),
+              [scrapedEvent.eventName]: r.displayTime,
+            },
+          },
         })
       }
 
-      // Upsert result (keyed on athlete + meetEvent)
       const round = r.round ?? 'Finals'
       await prisma.athleteResult.upsert({
-        where: {
-          id: `${athlete.id}-${meetEvent.id}-${round}`,
-        },
+        where: { id: `${athlete.id}-${meetEvent.id}-${round}` },
         create: {
           id: `${athlete.id}-${meetEvent.id}-${round}`,
           athleteId: athlete.id,
@@ -173,7 +167,24 @@ export async function ingestMeet(
         },
       })
       resultsUpserted++
+
+      // Track best rating per event per athlete (for meet-level rating)
+      const eventKey = `${scrapedEvent.eventName} ${r.gender}`
+      const athleteMap = athleteBestRatings.get(athlete.id) ?? new Map<string, number>()
+      if (rating > (athleteMap.get(eventKey) ?? 0)) athleteMap.set(eventKey, rating)
+      athleteBestRatings.set(athlete.id, athleteMap)
     }
+  }
+
+  // Compute and store meet-level athlete ratings
+  for (const [athleteId, bestByEvent] of athleteBestRatings) {
+    const eventRatings = Object.fromEntries(bestByEvent)
+    const meetRating = computeMeetRating([...bestByEvent.values()])
+    await prisma.meetAthleteRating.upsert({
+      where: { athleteId_meetId: { athleteId, meetId: meet.id } },
+      create: { athleteId, meetId: meet.id, meetRating, eventCount: bestByEvent.size, eventRatings },
+      update: { meetRating, eventCount: bestByEvent.size, eventRatings },
+    })
   }
 
   console.log(`  Done: ${eventsUpserted} events, ${resultsUpserted} results, ${athletesUpserted} new athletes`)

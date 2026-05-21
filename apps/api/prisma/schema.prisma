@@ -8,16 +8,17 @@ datasource db {
 }
 
 model Meet {
-  id         String      @id @default(cuid())
-  name       String
-  date       DateTime
-  location   String
-  level      String      // "hs" | "college" | "open"
-  division   String?
-  state      String
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  events     MeetEvent[]
+  id             String               @id @default(cuid())
+  name           String
+  date           DateTime
+  location       String
+  level          String               // "hs" | "college" | "open"
+  division       String?
+  state          String
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  events         MeetEvent[]
+  athleteRatings MeetAthleteRating[]
 }
 
 model MeetEvent {
@@ -30,34 +31,49 @@ model MeetEvent {
 }
 
 model Athlete {
-  id           String          @id @default(cuid())
+  id           String               @id @default(cuid())
   name         String
   school       String
   state        String
   gradYear     Int
-  gender       String          // "M" | "F"
+  gender       String               // "M" | "F"
   events       String[]
-  seasonBests  Json            @default("{}")
-  allTimePRs   Json            @default("{}")
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  seasonBests  Json                 @default("{}")
+  allTimePRs   Json                 @default("{}")
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
   results      AthleteResult[]
+  meetRatings  MeetAthleteRating[]
 }
 
 model AthleteResult {
-  id              String     @id @default(cuid())
-  athleteId       String
-  meetEventId     String
-  round           String     @default("Finals")
-  place           Int
-  time            Float
-  displayTime     String
-  teamName        String
-  rating          Float
-  ratingLabel     String
-  prAtMeet        Boolean    @default(false)
-  seasonBestAtMeet Boolean   @default(false)
-  createdAt       DateTime   @default(now())
-  athlete         Athlete    @relation(fields: [athleteId], references: [id])
-  meetEvent       MeetEvent  @relation(fields: [meetEventId], references: [id], onDelete: Cascade)
+  id               String     @id @default(cuid())
+  athleteId        String
+  meetEventId      String
+  round            String     @default("Finals")
+  place            Int
+  time             Float
+  displayTime      String
+  teamName         String
+  rating           Float
+  ratingLabel      String
+  prAtMeet         Boolean    @default(false)
+  seasonBestAtMeet Boolean    @default(false)
+  createdAt        DateTime   @default(now())
+  athlete          Athlete    @relation(fields: [athleteId], references: [id])
+  meetEvent        MeetEvent  @relation(fields: [meetEventId], references: [id], onDelete: Cascade)
+}
+
+model MeetAthleteRating {
+  id           String   @id @default(cuid())
+  athleteId    String
+  meetId       String
+  meetRating   Float
+  eventCount   Int
+  eventRatings Json     // { "100m M": 8.5, "200m M": 7.9 }
+  createdAt    DateTime @default(now())
+  athlete      Athlete  @relation(fields: [athleteId], references: [id])
+  meet         Meet     @relation(fields: [meetId], references: [id], onDelete: Cascade)
+
+  @@unique([athleteId, meetId])
 }

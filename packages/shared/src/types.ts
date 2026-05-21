@@ -10,7 +10,7 @@ export interface Meet {
   division: string | null
   state: string
   events: MeetEvent[]
-  topRatedAthletes?: AthleteResult[]
+  athleteRankings?: MeetAthleteRating[]
 }
 
 export interface MeetSummary {
@@ -57,12 +57,24 @@ export interface AthleteResultSummary {
   meetName: string
   meetDate: string
   eventName: string
+  round: string
   place: number
   displayTime: string
   rating: number
   ratingLabel: RatingLabel
   prAtMeet: boolean
   seasonBestAtMeet: boolean
+  meetRating?: number
+}
+
+export interface MeetAthleteRating {
+  id: string
+  athleteId: string
+  athleteName: string
+  meetId: string
+  meetRating: number
+  eventCount: number
+  eventRatings: Record<string, number>
 }
 
 export interface Athlete {
