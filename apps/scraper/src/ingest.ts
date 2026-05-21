@@ -129,8 +129,8 @@ export async function ingestMeet(
         round: r.round,
       })
 
-      // PR: true for first result in this event ever, or faster than stored all-time PR
-      const prAtMeet = prSeconds === null || r.timeSeconds <= prSeconds
+      // Only flag PR when we have a baseline and they beat it
+      const prAtMeet = prSeconds !== null && r.timeSeconds <= prSeconds
       const seasonBestAtMeet = sbSeconds === null || r.timeSeconds <= sbSeconds
 
       if (sbSeconds === null || r.timeSeconds < sbSeconds) {
