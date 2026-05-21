@@ -75,20 +75,22 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     const eventList = await eventListPromise
     await sleep(500)
 
-    const trackEventIds = eventList.length > 0
-      ? eventList.map((e) => e.e).filter((id) => TRACK_EVENTS[id] !== undefined)
-      : Object.keys(TRACK_EVENTS).map(Number)
+    // Keep e (event ID) + d (division) together — URL format is /{gender}/{d}/{slug}, not /{e}/{slug}
+    const trackEvents = eventList.length > 0
+      ? eventList.filter((item) => TRACK_EVENTS[item.e] !== undefined)
+      : Object.keys(TRACK_EVENTS).map(Number).map((id) => ({ e: id, d: 1 }))
 
-    console.log(`  Track events to scrape: ${trackEventIds.join(', ')}`)
+    console.log(`  Track events to scrape: ${trackEvents.map((t) => `${TRACK_EVENTS[t.e]}(d${t.d})`).join(', ')}`)
 
     const allEvents: ScrapedEvent[] = []
 
     // Use a fresh page per event — repeated page.goto() within the same page triggers
     // SPA client-side routing which skips the GetResultsData3 network call.
     // Fresh pages share CF clearance cookies via the shared browser context.
-    for (const eventId of trackEventIds) {
+    for (const { e: eventId, d: division } of trackEvents) {
       for (const gender of ['m', 'f'] as const) {
-        const eventUrl = `${baseUrl}/${gender}/${eventId}`
+        const eventSlug = (TRACK_EVENTS[eventId] ?? '').toLowerCase()
+        const eventUrl = `${baseUrl}/${gender}/${division}/${eventSlug}`
 
         const { page: ep } = await newPage()
         try {
@@ -99,17 +101,25 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
             }, 20_000)
             ep.on('response', async (res) => {
               if (!res.url().includes('GetResultsData3')) return
-              clearTimeout(t)
               if (!res.ok()) {
-                console.log(`    GetResultsData3 ${res.status()} for ${eventUrl}`)
-                resolve(null)
+                // 429 = rate limited, give up on this event
+                if (res.status() === 429) {
+                  clearTimeout(t)
+                  console.log(`    GetResultsData3 429 for ${eventUrl}`)
+                  resolve(null)
+                }
                 return
               }
               try {
                 const json = await res.json() as Record<string, unknown>
-                resolve(parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId))
+                const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
+                if (parsed && parsed.results.length > 0) {
+                  clearTimeout(t)
+                  resolve(parsed)
+                }
+                // empty resultsTF = first/metadata call — keep listening for the results call
               } catch {
-                resolve(null)
+                // parse error — keep listening
               }
             })
           })
@@ -126,6 +136,8 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
         } finally {
           await ep.close()
         }
+
+        await sleep(500)
       }
     }
 
