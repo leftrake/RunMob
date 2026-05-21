@@ -73,6 +73,7 @@ meetsRouter.get('/:id', async (c) => {
         athleteId: r.athleteId,
         athleteName: r.athlete.name,
         meetEventId: r.meetEventId,
+        round: r.round,
         place: r.place,
         time: r.time,
         displayTime: r.displayTime,

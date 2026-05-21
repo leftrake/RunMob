@@ -82,6 +82,10 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
       : Object.keys(TRACK_EVENTS).map(Number).map((id) => ({ e: id, d: 1 }))
 
     console.log(`  Track events to scrape: ${trackEvents.map((t) => `${TRACK_EVENTS[t.e]}(d${t.d})`).join(', ')}`)
+    const unknownIds = eventList.filter((item) => TRACK_EVENTS[item.e] === undefined)
+    if (unknownIds.length > 0) {
+      console.log(`  Unrecognized event IDs (not scraped): ${unknownIds.map((i) => `e${i.e}(d${i.d})`).join(', ')}`)
+    }
 
     const allEvents: ScrapedEvent[] = []
 
@@ -102,16 +106,18 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
           const allRoundResults: ScrapedResult[] = []
           let eventMeta: { eventName: string; gender: 'M' | 'F' } | null = null
           let noResults = false
+          let lastResponseAt = 0
+          let responseCount = 0
 
           ep.on('response', async (res) => {
             if (!res.url().includes('GetResultsData3') || !res.ok()) return
             try {
               const json = await res.json() as Record<string, unknown>
               if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
+              lastResponseAt = Date.now()
+              responseCount++
               const outerArr = (json.resultsTF as unknown[][]) ?? []
-              const rowCount = outerArr.flat().length
-              const sample = outerArr[0]?.[0] as Record<string, unknown> | undefined
-              console.log(`    GetResultsData3: ${rowCount} rows, outerLen=${outerArr.length}, sample=${JSON.stringify(sample).slice(0, 300)}`)
+              console.log(`    GetResultsData3 #${responseCount}: ${outerArr.flat().length} rows`)
               const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
               if (parsed && parsed.results.length > 0) {
                 if (!eventMeta) eventMeta = { eventName: parsed.eventName, gender: parsed.gender }
@@ -125,16 +131,21 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-          // Both prelims and finals load automatically — wait for all GetResultsData3 calls to complete
-          const deadline = Date.now() + 5000
-          while (!noResults && Date.now() < deadline) await sleep(200)
+          // Wait up to 10s total; exit 2s after last results response.
+          // noResults can fire before the real results on some events (relay events especially)
+          // so enforce a 2s minimum before giving up on a noResults signal.
+          const startedAt = Date.now()
+          while (Date.now() - startedAt < 10_000) {
+            await sleep(200)
+            if (noResults && responseCount === 0 && Date.now() - startedAt > 2_000) break
+            if (responseCount > 0 && Date.now() - lastResponseAt > 2_000) break
+          }
 
-          const result = eventMeta && allRoundResults.length > 0
-            ? { eventName: eventMeta.eventName, gender: eventMeta.gender, results: allRoundResults }
-            : null
-          if (result && result.results.length > 0) {
-            allEvents.push(result)
-            console.log(`    ${result.eventName} ${gender}: ${result.results.length} results`)
+          // eventMeta may be set by async handler — cast to avoid TS control-flow narrowing to null
+          const meta = eventMeta as { eventName: string; gender: 'M' | 'F' } | null
+          if (meta && allRoundResults.length > 0) {
+            allEvents.push({ eventName: meta.eventName, gender: meta.gender, results: allRoundResults })
+            console.log(`    ${meta.eventName} ${gender}: ${allRoundResults.length} results`)
           }
         } catch (err) {
           console.log(`    Error for ${eventUrl}: ${err}`)
@@ -175,15 +186,15 @@ function parseResultsData3Response(
     const outerList = (json.resultsTF as unknown[][]) ?? []
     if (outerList.length === 0 || outerList.every((arr) => arr.length === 0)) return null
 
-    const roundLabels = (json.rounds as Array<{ RoundDesc: string }> | undefined) ?? []
+    // Map IDRound → RoundDesc so each result's Round field ("F", "P", etc.) resolves correctly
+    const roundById = new Map(
+      ((json.rounds as Array<{ IDRound: string; RoundDesc: string }>) ?? []).map((r) => [r.IDRound, r.RoundDesc])
+    )
 
     const results: ScrapedResult[] = []
 
-    for (let ri = 0; ri < outerList.length; ri++) {
-      const round = roundLabels[ri]?.RoundDesc ?? (ri === 0 ? 'Finals' : `Round ${ri + 1}`)
-      const roundResults: ScrapedResult[] = []
-
-      for (const raw of outerList[ri]) {
+    for (const roundArr of outerList) {
+      for (const raw of roundArr) {
         const r = raw as Record<string, unknown>
         const displayTime = String(r.Result ?? '').trim()
         if (!displayTime || /^(DNS|DNF|DQ|SCR|FS|NH|ND)$/.test(displayTime)) continue
@@ -200,8 +211,11 @@ function parseResultsData3Response(
         const athleteName = [firstName, lastName].filter(Boolean).join(' ') || String(r.disAthlete ?? '').trim()
         if (!athleteName) continue
 
-        roundResults.push({
-          place: parseInt(String(r.Place ?? '0')) || roundResults.length + 1,
+        const roundId = String(r.Round ?? 'F')
+        const round = roundById.get(roundId) ?? (roundId === 'F' ? 'Finals' : roundId === 'P' ? 'Prelims' : roundId)
+
+        results.push({
+          place: parseInt(String(r.Place ?? '0')) || results.length + 1,
           athleteName,
           athleticNetAthleteId: String(r.AthleteID ?? '').trim() || null,
           school: String(r.SchoolName ?? r.disTeam ?? '').trim(),
@@ -212,8 +226,6 @@ function parseResultsData3Response(
           round,
         })
       }
-
-      results.push(...roundResults)
     }
 
     if (results.length === 0) return null

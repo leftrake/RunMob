@@ -56,11 +56,18 @@ export async function ingestMeet(
     })
     eventsUpserted++
 
-    // Compute field average season best for rating context
-    const validTimes = scrapedEvent.results.map((r) => r.timeSeconds).filter((t) => t > 0)
-    const fieldAvgSB = validTimes.length > 0
-      ? validTimes.reduce((a, b) => a + b, 0) / validTimes.length
-      : null
+    // Pre-compute per-round field stats so ratings are relative to each round's field
+    const roundGroups = new Map<string, typeof scrapedEvent.results>()
+    for (const r of scrapedEvent.results) {
+      const group = roundGroups.get(r.round) ?? []
+      group.push(r)
+      roundGroups.set(r.round, group)
+    }
+    const roundFieldAvg = new Map<string, number | null>()
+    for (const [round, results] of roundGroups) {
+      const times = results.map((r) => r.timeSeconds).filter((t) => t > 0)
+      roundFieldAvg.set(round, times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : null)
+    }
 
     for (const r of scrapedEvent.results) {
       // Find or create athlete
@@ -108,13 +115,14 @@ export async function ingestMeet(
         (athlete.allTimePRs as Record<string, string>)[scrapedEvent.eventName] ?? '',
       )
 
+      const roundSize = roundGroups.get(r.round)?.length ?? 1
       const rating = computeRating({
         place: r.place,
-        fieldSize: scrapedEvent.results.length,
+        fieldSize: roundSize,
         timeSeconds: r.timeSeconds,
         seasonBestSeconds: sbSeconds,
         personalBestSeconds: prSeconds,
-        fieldAvgSeasonBest: fieldAvgSB,
+        fieldAvgSeasonBest: roundFieldAvg.get(r.round) ?? null,
         isLowerBetter: true,
       })
 

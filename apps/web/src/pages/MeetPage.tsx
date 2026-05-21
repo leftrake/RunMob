@@ -153,7 +153,20 @@ function MvpCard({ result, athleteName, eventName }: { result: AthleteResult; at
   )
 }
 
+const ROUND_ORDER = ['Finals', 'Prelims']
+
 function EventResultsTable({ event }: { event: MeetEvent }) {
+  const byRound = event.results.reduce<Record<string, typeof event.results>>((acc, r) => {
+    ;(acc[r.round] ??= []).push(r)
+    return acc
+  }, {})
+
+  const rounds = [
+    ...ROUND_ORDER.filter((r) => byRound[r]),
+    ...Object.keys(byRound).filter((r) => !ROUND_ORDER.includes(r)),
+  ]
+  const multipleRounds = rounds.length > 1
+
   return (
     <div className="bg-surface rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-white/5">
@@ -162,18 +175,26 @@ function EventResultsTable({ event }: { event: MeetEvent }) {
         </h2>
       </div>
 
-      <div className="divide-y divide-white/5">
-        <div className="grid grid-cols-[2rem_1fr_auto_auto] gap-x-3 px-4 py-2 text-text-secondary text-xs font-medium">
-          <span>#</span>
-          <span>Athlete</span>
-          <span>Time</span>
-          <span>Rating</span>
+      {rounds.map((round) => (
+        <div key={round}>
+          {multipleRounds && (
+            <div className="px-4 py-2 bg-surface-2/40 border-b border-white/5 text-text-secondary text-xs font-semibold uppercase tracking-widest">
+              {round}
+            </div>
+          )}
+          <div className="divide-y divide-white/5">
+            <div className="grid grid-cols-[2rem_1fr_auto_auto] gap-x-3 px-4 py-2 text-text-secondary text-xs font-medium">
+              <span>#</span>
+              <span>Athlete</span>
+              <span>Time</span>
+              <span>Rating</span>
+            </div>
+            {byRound[round].map((result) => (
+              <ResultRow key={result.id} result={result} />
+            ))}
+          </div>
         </div>
-
-        {event.results.map((result) => (
-          <ResultRow key={result.id} result={result} />
-        ))}
-      </div>
+      ))}
     </div>
   )
 }
