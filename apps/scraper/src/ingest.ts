@@ -63,12 +63,18 @@ export async function ingestMeet(
     }, {})
     console.log(`  ${scrapedEvent.eventName} ${scrapedEvent.gender}: ${Object.entries(roundCounts).map(([r, n]) => `${r}=${n}`).join(', ')}`)
 
-    // Per-round field sizes
+    // Group results by round, then compute per-round winner time and spread
     const roundGroups = new Map<string, typeof scrapedEvent.results>()
     for (const r of scrapedEvent.results) {
       const group = roundGroups.get(r.round) ?? []
       group.push(r)
       roundGroups.set(r.round, group)
+    }
+    const roundStats = new Map<string, { winnerTime: number; spread: number }>()
+    for (const [round, group] of roundGroups) {
+      const times = group.map((r) => r.timeSeconds)
+      const winnerTime = Math.min(...times)
+      roundStats.set(round, { winnerTime, spread: Math.max(...times) - winnerTime })
     }
 
     for (const r of scrapedEvent.results) {
@@ -119,13 +125,15 @@ export async function ingestMeet(
       )
 
       const roundSize = roundGroups.get(r.round)?.length ?? 1
+      const stats = roundStats.get(r.round) ?? { winnerTime: r.timeSeconds, spread: 0 }
       const rating = computeRating({
         place: r.place,
         fieldSize: roundSize,
-        timeSeconds: r.timeSeconds,
+        gapToWinner: Math.max(0, r.timeSeconds - stats.winnerTime),
+        fieldSpread: stats.spread,
+        prDelta: prSeconds !== null ? r.timeSeconds - prSeconds : 0,
         eventName: scrapedEvent.eventName,
         gender: r.gender,
-        personalBestSeconds: prSeconds,
         round: r.round,
       })
 
