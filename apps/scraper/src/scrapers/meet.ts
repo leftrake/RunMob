@@ -106,7 +106,9 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
             if (!res.url().includes('GetResultsData3') || !res.ok()) return
             try {
               const json = await res.json() as Record<string, unknown>
-              if (json.currentEventValid === false) { noResults = true; return }
+              // Only trust currentEventValid:false if there's no eventId — a bare {"currentEventValid":false}
+              // means the event doesn't exist; a fuller response with that field may be a loading state.
+              if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
               const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
               if (parsed && parsed.results.length > 0) latestResult = parsed
             } catch { /* ignore */ }
