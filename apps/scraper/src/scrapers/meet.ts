@@ -89,7 +89,10 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
     // Fresh pages share CF clearance cookies via the shared browser context.
     for (const { e: eventId, d: division } of trackEvents) {
       for (const gender of ['m', 'f'] as const) {
-        const eventSlug = (TRACK_EVENTS[eventId] ?? '').toLowerCase()
+        // Girls run 100mH, boys run 110mH — different slug for female event 9
+        const eventSlug = (eventId === 9 && gender === 'f')
+          ? '100mh'
+          : (TRACK_EVENTS[eventId] ?? '').toLowerCase()
         const eventUrl = `${baseUrl}/${gender}/${division}/${eventSlug}`
 
         const { page: ep } = await newPage()
