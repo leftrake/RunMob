@@ -4,7 +4,7 @@ import { scrapeMeet } from './scrapers/meet.js'
 import { ingestMeet, prisma } from './ingest.js'
 import { closeBrowser, sleep } from './browser.js'
 import { computeRating, computeMeetRating, getRatingLabel } from '@runmob/shared'
-import { safeParseTime } from './scrapers/athlete.js'
+import { scrapeAthleteProfile, safeParseTime } from './scrapers/athlete.js'
 
 // States to scrape — extend as needed
 const STATES = (process.env.SCRAPE_STATES ?? 'NC').split(',').map((s) => s.trim())
@@ -178,9 +178,70 @@ async function rerateAll(): Promise<void> {
   console.log(`\nDone: ${meets.length} meets, ${totalResults} results re-rated`)
 }
 
+async function scrapeAllAthletes(): Promise<void> {
+  // Only athletes whose ID is a numeric AthleticNET ID can be looked up
+  // Prisma doesn't support regex filters on IDs — filter in JS after fetch
+  const allAthletes = await prisma.athlete.findMany({ orderBy: { updatedAt: 'asc' } })
+  const athletes = allAthletes.filter((a) => /^\d+$/.test(a.id))
+
+  console.log(`Scraping profiles for ${athletes.length} athletes...`)
+  let updated = 0
+  let failed = 0
+
+  for (let i = 0; i < athletes.length; i++) {
+    const athlete = athletes[i]
+    process.stdout.write(`  [${i + 1}/${athletes.length}] ${athlete.name}... `)
+
+    try {
+      const profile = await scrapeAthleteProfile(athlete.id)
+      if (!profile) {
+        process.stdout.write('no data\n')
+        failed++
+      } else {
+        // Merge: only overwrite with AthleticNET data if it's better (lower time)
+        const existing = athlete.allTimePRs as Record<string, string>
+        const merged: Record<string, string> = { ...existing }
+        for (const [event, time] of Object.entries(profile.allTimePRs)) {
+          const existingSeconds = safeParseTime(existing[event] ?? '')
+          const newSeconds = safeParseTime(time)
+          if (newSeconds !== null && (existingSeconds === null || newSeconds < existingSeconds)) {
+            merged[event] = time
+          }
+        }
+
+        await prisma.athlete.update({
+          where: { id: athlete.id },
+          data: {
+            allTimePRs: merged,
+            seasonBests: profile.seasonBests,
+            school: profile.school || athlete.school,
+            state: profile.state || athlete.state,
+            gradYear: profile.gradYear || athlete.gradYear,
+          },
+        })
+        process.stdout.write(`done (${Object.keys(profile.allTimePRs).length} PRs)\n`)
+        updated++
+      }
+    } catch (err) {
+      process.stdout.write(`error: ${err}\n`)
+      failed++
+    }
+
+    // Polite delay between profiles
+    await sleep(1000)
+  }
+
+  console.log(`\nDone: ${updated} updated, ${failed} failed`)
+  console.log('Run --rerate to apply updated PRs to all ratings.')
+}
+
 // Entry point
 
-if (args[0] === '--rerate') {
+if (args[0] === '--scrape-athletes') {
+  scrapeAllAthletes()
+    .catch(console.error)
+    .finally(() => prisma.$disconnect().then(() => closeBrowser()).then(() => process.exit(0)))
+} else if (args[0] === '--rerate') {
   rerateAll()
     .catch(console.error)
     .finally(() => prisma.$disconnect().then(() => process.exit(0)))
