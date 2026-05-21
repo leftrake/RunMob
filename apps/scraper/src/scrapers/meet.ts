@@ -98,35 +98,40 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
 
         const { page: ep } = await newPage()
         try {
-          // Use a variable rather than resolving immediately — always click Finals so we get
-          // finals results even when prelims auto-load first on page navigation.
-          let latestResult: ScrapedEvent | null = null
-          let noResults = false  // set when GetResultsData3 says currentEventValid: false
+          // Accumulate results from ALL GetResultsData3 responses (prelims + finals are separate calls)
+          const allRoundResults: ScrapedResult[] = []
+          let eventMeta: { eventName: string; gender: 'M' | 'F' } | null = null
+          let noResults = false
 
           ep.on('response', async (res) => {
             if (!res.url().includes('GetResultsData3') || !res.ok()) return
             try {
               const json = await res.json() as Record<string, unknown>
-              // Only trust currentEventValid:false if there's no eventId — a bare {"currentEventValid":false}
-              // means the event doesn't exist; a fuller response with that field may be a loading state.
               if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
               const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
-              if (parsed && parsed.results.length > 0) latestResult = parsed
+              if (parsed && parsed.results.length > 0) {
+                if (!eventMeta) eventMeta = { eventName: parsed.eventName, gender: parsed.gender }
+                // Deduplicate by athlete+round key in case the same response fires twice
+                const existingKeys = new Set(allRoundResults.map((r) => `${r.athleteName}-${r.round}`))
+                for (const r of parsed.results) {
+                  if (!existingKeys.has(`${r.athleteName}-${r.round}`)) allRoundResults.push(r)
+                }
+              }
             } catch { /* ignore */ }
           })
 
           console.log(`    -> ${eventUrl}`)
           await ep.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
           await sleep(800)
-          // Only click Finals if results haven't auto-loaded yet
-          if (!latestResult) {
-            try { await ep.click('text=Finals', { timeout: 2000 }) } catch { /* no Finals tab */ }
-          }
-          // Wait up to 8s for results, exit early once they arrive or event has no results
-          const deadline = Date.now() + 8000
-          while (!latestResult && !noResults && Date.now() < deadline) await sleep(200)
+          // Always click Finals — triggers the finals GetResultsData3 call even when prelims auto-loaded
+          try { await ep.click('text=Finals', { timeout: 2000 }) } catch { /* no Finals tab */ }
+          // Wait 3.5s to capture both auto-load (prelims) and Finals click response
+          const deadline = Date.now() + 3500
+          while (!noResults && Date.now() < deadline) await sleep(200)
 
-          const result = latestResult
+          const result = eventMeta && allRoundResults.length > 0
+            ? { eventName: eventMeta.eventName, gender: eventMeta.gender, results: allRoundResults }
+            : null
           if (result && result.results.length > 0) {
             allEvents.push(result)
             console.log(`    ${result.eventName} ${gender}: ${result.results.length} results`)
