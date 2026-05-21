@@ -108,7 +108,11 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
               }
               try {
                 const json = await res.json() as Record<string, unknown>
-                resolve(parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId))
+                const parsed = parseResultsData3Response(json, gender === 'm' ? 'M' : 'F', eventId)
+                if (!parsed) {
+                  console.log(`    GetResultsData3 empty for ${eventUrl}: ${JSON.stringify(json).slice(0, 300)}`)
+                }
+                resolve(parsed)
               } catch {
                 resolve(null)
               }
