@@ -137,7 +137,7 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
           await ep.close()
         }
 
-        await sleep(2000)
+        await sleep(500)
       }
     }
 
