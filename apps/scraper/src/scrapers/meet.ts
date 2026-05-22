@@ -134,19 +134,26 @@ export async function scrapeMeet(athleticNetId: string, rsUrl?: string | null): 
       await sleep(400)
     }
 
-    // Retry pass — longer waits for events that came up empty on first attempt
-    if (noDataTargets.length > 0) {
-      console.log(`  Retrying ${noDataTargets.length} confirmed events with no data...`)
-      for (const target of noDataTargets) {
-        const result = await scrapeEventPage(baseUrl, target, { maxWaitMs: 20_000, noResultsMinWaitMs: 10_000 })
+    // Retry passes — if an event came up empty, try it again fresh (up to 2 more times).
+    // Since failures are random (overlay, CF flicker) rather than systematic, a clean
+    // re-attempt with normal timeouts is more effective than a single long-wait retry.
+    let stillMissing = noDataTargets
+    for (let pass = 1; pass <= 2 && stillMissing.length > 0; pass++) {
+      console.log(`  Retry pass ${pass}: ${stillMissing.length} events...`)
+      await sleep(1_000)  // brief pause before retry so any transient overlay clears
+      const stillMissingAfter: ScrapeTarget[] = []
+      for (const target of stillMissing) {
+        const result = await scrapeEventPage(baseUrl, target)
         if (result) {
           allEvents.push(result)
-          console.log(`    [retry ok] ${result.eventName} ${target.gender.toUpperCase()}: ${result.results.length} results`)
+          console.log(`    [retry ${pass} ok] ${result.eventName} ${target.gender.toUpperCase()}: ${result.results.length} results`)
         } else {
-          console.log(`    [retry fail] ${TRACK_EVENTS[target.eventId]} ${target.gender.toUpperCase()}`)
+          stillMissingAfter.push(target)
+          console.log(`    [retry ${pass} fail] ${TRACK_EVENTS[target.eventId]} ${target.gender.toUpperCase()}`)
         }
-        await sleep(500)
+        await sleep(400)
       }
+      stillMissing = stillMissingAfter
     }
 
     const title = await page.title().catch(() => '')
