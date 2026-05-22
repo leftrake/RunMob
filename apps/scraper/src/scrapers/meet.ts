@@ -217,6 +217,14 @@ async function scrapeEventPage(
     console.log(`    -> ${eventUrl}`)
     await page.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
 
+    // Dismiss any overlay, ad, or modal that might block SPA from firing GetResultsData3.
+    // Escape closes most modals; clicking the body gives the page focus and simulates
+    // user interaction that some SPAs require before loading data.
+    await page.keyboard.press('Escape').catch(() => {})
+    await sleep(300)
+    await page.mouse.click(400, 300).catch(() => {})
+    await sleep(200)
+
     // Wait loop:
     // - Exit 2s after the last valid data response (prelims and finals may be separate calls)
     // - Exit noResultsMinWaitMs after the noResults signal arrived — measured from THAT moment,
