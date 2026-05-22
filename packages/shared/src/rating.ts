@@ -127,7 +127,7 @@ export function computeMeetRating(eventRatings: number[]): number {
   if (eventRatings.length === 0) return 0
   const sorted = [...eventRatings].sort((a, b) => b - a)
   const primary = sorted[0]
-  const bonus = sorted.slice(1).reduce((sum, r) => sum + Math.max(0, r - 5.0) * 0.15, 0)
+  const bonus = sorted.slice(1).reduce((sum, r) => sum + Math.max(0, r - 5.5) * 0.15, 0)
   return Math.min(10, Math.round((primary + bonus) * 10) / 10)
 }
 
