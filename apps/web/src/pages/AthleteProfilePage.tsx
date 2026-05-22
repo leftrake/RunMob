@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import type { Athlete } from '@runmob/shared'
+import type { Athlete, AthleteResultSummary } from '@runmob/shared'
 import { api } from '../lib/api'
 import { formatShortDate } from '../lib/utils'
 import { RatingBadge } from '../components/RatingBadge'
@@ -25,6 +25,20 @@ export function AthleteProfilePage() {
 
   const seasonBests = athlete.seasonBests as Record<string, string>
   const allTimePRs = athlete.allTimePRs as Record<string, string>
+
+  const meetHistory = useMemo(() => {
+    const byMeet = new Map<string, {
+      meetId: string; meetName: string; meetDate: string
+      meetRating: number | null; results: AthleteResultSummary[]
+    }>()
+    for (const r of athlete.results) {
+      if (!byMeet.has(r.meetId)) {
+        byMeet.set(r.meetId, { meetId: r.meetId, meetName: r.meetName, meetDate: r.meetDate, meetRating: r.meetRating, results: [] })
+      }
+      byMeet.get(r.meetId)!.results.push(r)
+    }
+    return [...byMeet.values()].sort((a, b) => new Date(b.meetDate).getTime() - new Date(a.meetDate).getTime())
+  }, [athlete.results])
 
   return (
     <div className="space-y-6">
@@ -66,6 +80,46 @@ export function AthleteProfilePage() {
                 {allTimePRs[event] === time && (
                   <p className="text-accent text-xs mt-1 font-medium">All-time PR</p>
                 )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Meet history */}
+      {meetHistory.length > 0 && (
+        <section>
+          <h2 className="font-display text-xl font-semibold text-text-primary mb-3">Meet History</h2>
+          <div className="space-y-3">
+            {meetHistory.map((meet) => (
+              <div key={meet.meetId} className="bg-surface rounded-xl p-4">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <Link
+                      to={`/meet/${meet.meetId}`}
+                      className="font-medium text-text-primary hover:text-accent transition-colors"
+                    >
+                      {meet.meetName}
+                    </Link>
+                    <p className="text-text-secondary text-xs mt-0.5">{formatShortDate(meet.meetDate)}</p>
+                  </div>
+                  {meet.meetRating != null && (
+                    <div className="text-right shrink-0">
+                      <RatingBadge rating={meet.meetRating} size="lg" />
+                      <p className="text-text-secondary text-xs mt-1">Meet Rating</p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {meet.results.map((r) => (
+                    <div key={r.id} className="flex items-center gap-1.5 bg-surface-2 rounded-lg px-2.5 py-1.5">
+                      <RatingBadge rating={r.rating} size="sm" />
+                      <span className="text-text-secondary text-xs">{r.eventName}</span>
+                      <span className="font-mono text-text-primary text-xs">{r.displayTime}</span>
+                      {r.prAtMeet && <span className="text-[10px] bg-accent/20 text-accent px-1 rounded font-bold">PR</span>}
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
