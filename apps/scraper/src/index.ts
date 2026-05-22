@@ -143,7 +143,7 @@ async function rerateAll(): Promise<void> {
           fieldSize: roundSize,
           gapToWinner: Math.max(0, result.time - stats.winnerTime),
           fieldSpread: stats.spread,
-          prDelta: prSeconds !== null ? result.time - prSeconds : 0,
+          prDelta: prSeconds !== null ? result.time - prSeconds : null,
           eventName: event.eventName,
           gender: event.gender as 'M' | 'F',
           round: result.round,

@@ -133,7 +133,7 @@ export async function ingestMeet(
         fieldSize: roundSize,
         gapToWinner: Math.max(0, r.timeSeconds - stats.winnerTime),
         fieldSpread: stats.spread,
-        prDelta: prSeconds !== null ? r.timeSeconds - prSeconds : 0,
+        prDelta: prSeconds !== null ? r.timeSeconds - prSeconds : null,
         eventName: scrapedEvent.eventName,
         gender: r.gender,
         round: r.round,

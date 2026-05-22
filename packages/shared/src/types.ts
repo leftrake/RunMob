@@ -64,7 +64,7 @@ export interface AthleteResultSummary {
   ratingLabel: RatingLabel
   prAtMeet: boolean
   seasonBestAtMeet: boolean
-  meetRating?: number
+  meetRating: number | null
 }
 
 export interface MeetAthleteRating {

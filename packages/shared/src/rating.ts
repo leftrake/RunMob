@@ -85,8 +85,8 @@ export interface RatingInputs {
   gapToWinner: number
   /** Spread in seconds from winner to last place */
   fieldSpread: number
-  /** timeSeconds − personalBest. Negative = beat PR. Pass 0 if no PR on file. */
-  prDelta: number
+  /** timeSeconds − personalBest. Negative = beat PR. null = no PR on file. */
+  prDelta: number | null
   eventName: string
   gender: 'M' | 'F'
   round: string
@@ -103,25 +103,31 @@ export function computeRating(inputs: RatingInputs): number {
   const minSpread = MIN_SPREAD_BY_EVENT[eventName] ?? 5.0
   const gapScore = 1 - clamp(gapToWinner / Math.max(fieldSpread, minSpread), 0, 1)
 
-  // 3. PR score: sigmoid — negative delta (beat PR) pushes above 0.5, positive below
-  //    Scale is event-specific: 0.5s matters a lot in the 100m, barely registers in the 3200m
-  const prScale = PR_SCALE_BY_EVENT[eventName] ?? 5.0
-  const prScore = sigmoid(-prDelta, PR_CENTER, prScale)
-
-  const raw = placeScore * WEIGHT_PLACE + gapScore * WEIGHT_GAP + prScore * WEIGHT_PR
+  let raw: number
+  if (prDelta === null) {
+    // No PR data — only place and gap contribute. Max raw = 0.75 → max score 7.5.
+    // This prevents first-race winners from always hitting ~8.8 regardless of context.
+    raw = placeScore * WEIGHT_PLACE + gapScore * WEIGHT_GAP
+  } else {
+    // 3. PR score: sigmoid — negative delta (beat PR) pushes above 0.5, positive below.
+    //    Scale is event-specific: 0.5s matters a lot in the 100m, barely registers in the 3200m.
+    const prScale = PR_SCALE_BY_EVENT[eventName] ?? 5.0
+    const prScore = sigmoid(-prDelta, PR_CENTER, prScale)
+    raw = placeScore * WEIGHT_PLACE + gapScore * WEIGHT_GAP + prScore * WEIGHT_PR
+  }
 
   // Map 0–1 to 1–10 (floor at 1 so even last place gets a score)
   return Math.round(clamp(raw * 10, 1, 10) * 10) / 10
 }
 
-// Meet-level athlete rating: best event as base + diminishing bonus per additional event.
-// Running a second or third event adds value — hard to max out but multi-event athletes
-// score meaningfully higher than single-event athletes at the same level.
+// Meet-level athlete rating: best event as base + quality-gated bonus per additional event.
+// Mediocre events (≤5.0) give no bonus — only genuinely good performances in multiple events
+// should boost the meet rating.
 export function computeMeetRating(eventRatings: number[]): number {
   if (eventRatings.length === 0) return 0
   const sorted = [...eventRatings].sort((a, b) => b - a)
   const primary = sorted[0]
-  const bonus = sorted.slice(1).reduce((sum, r) => sum + r * 0.15, 0)
+  const bonus = sorted.slice(1).reduce((sum, r) => sum + Math.max(0, r - 5.0) * 0.15, 0)
   return Math.min(10, Math.round((primary + bonus) * 10) / 10)
 }
 
