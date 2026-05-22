@@ -187,7 +187,7 @@ async function scrapeEventPage(
   try {
     const allRoundResults: ScrapedResult[] = []
     let eventMeta: { eventName: string; gender: 'M' | 'F' } | null = null
-    let noResults = false
+    let noResultsAt = 0   // timestamp when currentEventValid:false fired (0 = not yet)
     let lastResponseAt = 0
     let responseCount = 0
 
@@ -195,7 +195,10 @@ async function scrapeEventPage(
       if (!res.url().includes('GetResultsData3') || !res.ok()) return
       try {
         const json = await res.json() as Record<string, unknown>
-        if (json.currentEventValid === false && !json.eventId) { noResults = true; return }
+        if (json.currentEventValid === false && !json.eventId) {
+          if (noResultsAt === 0) noResultsAt = Date.now()
+          return
+        }
         lastResponseAt = Date.now()
         responseCount++
         const outerArr = (json.resultsTF as unknown[][]) ?? []
@@ -214,13 +217,15 @@ async function scrapeEventPage(
     console.log(`    -> ${eventUrl}`)
     await page.goto(eventUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
 
-    // Wait loop: exit early once data settles (2s since last response) or noResults confirmed.
-    // AthleticNET sometimes fires currentEventValid:false before sending the real payload,
-    // so we always wait at least noResultsMinWaitMs before treating a noResults signal as final.
+    // Wait loop:
+    // - Exit 2s after the last valid data response (prelims and finals may be separate calls)
+    // - Exit noResultsMinWaitMs after the noResults signal arrived — measured from THAT moment,
+    //   not from page load, so a late-firing currentEventValid:false still gets a full grace window
+    // - Hard cap at maxWaitMs from page load
     const startedAt = Date.now()
     while (Date.now() - startedAt < maxWaitMs) {
       await sleep(200)
-      if (noResults && responseCount === 0 && Date.now() - startedAt > noResultsMinWaitMs) break
+      if (noResultsAt > 0 && responseCount === 0 && Date.now() - noResultsAt > noResultsMinWaitMs) break
       if (responseCount > 0 && Date.now() - lastResponseAt > 2_000) break
     }
 
